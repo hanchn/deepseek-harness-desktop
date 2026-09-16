@@ -1,25 +1,49 @@
 # dsh-open-in-app-plus
 
-给 DSH Web UI 增加一行**自定义"打开方式"**：在会话头部、上游自带的
-"Open In..." 按钮**旁边**新增一个下拉，里面是 Trae / Qoder / Codex 桌面版等
-预设，以及你自己写在配置文件里的任意条目。
+给 DSH Web UI 的会话头部**一个合并的"打开方式"控件**：上游自带的
+Finder / Cursor / VS Code / Zed… 目录，和 Trae / Qoder / Codex 桌面版等自定义
+条目，**共用一个分体按钮 + 一个菜单**，不再并排两个下拉。
 
-上游不带这个能力，而且是官方明确延后的：
+上游不带自定义目录的能力，而且是官方明确延后的：
 
 > **The catalog is fixed at build time.** A deployment cannot add its own editor
 > or Git GUI from cordis.yml ... Configurable custom handlers remain deferred.
 >
 > — `@deepseek-ai/dsh-host-open-in-app` README, *Known Limitations*
 
-所以本插件不扩展上游目录，而是自带一套 host 路由 + 客户端控件。两者并存：
-上游按钮继续管它的内置目录（Finder / Cursor / VS Code / Zed …），本插件管你的。
+所以本插件自带一套 host 路由供自定义条目使用，并通过**复用上游的 cell id**
+把两者合成一个控件。
 
 ## 装了什么
 
 | 半身 | 文件 | 内容 |
 |---|---|---|
-| host | `lib/index.js` | `GET /open-in-app-plus/apps`（合并后的目录）、`POST /open-in-app-plus/open`（按 id 启动） |
-| client | `lib/client.js` | 注册进 `conversation.session.header.utilities` 的下拉控件 |
+| host | `lib/index.js` | `GET /open-in-app-plus/apps`（自定义目录）、`POST /open-in-app-plus/open`（按 id 启动） |
+| client | `lib/client.js` | 接管 `conversation.session.header.utilities` 的 `open-in-app` cell，渲染合并后的分体按钮 |
+
+## 合并是怎么做到的
+
+会话头部的 `conversation.session.header.utilities` 是一个 **list slot**，其契约
+写明：
+
+> 用你自己的 id：新条目会**加在**已发布条目旁边；**复用已发布的 id 则进入那个
+> cell 并替换它**。
+>
+> — `@deepseek-ai/dsh-cordis-client-runner` slot 契约
+
+上游 `dsh-client-ui-open-in-app` 用 id `open-in-app`、order `-10` 占用该 cell。
+本插件用**同一个 id 和 order** 注册，于是替换掉它的占位，而不是并排再加一个：
+
+- 菜单上半部分：上游目录（`GET /open-in-app/apps` 的 id，图标走
+  `/open-in-app/icon/<id>`，名称用本插件内的产品名表；未知 id 回退显示原 id）；
+- 菜单下半部分：本插件的自定义条目（`GET /open-in-app-plus/apps`）；
+- 启动各走各的路由：上游条目 → `POST /open-in-app/open`，自定义条目 →
+  `POST /open-in-app-plus/open`；
+- 记住的选择带命名空间前缀（`ship:` / `plus:`），因为两个目录的 id 空间独立。
+
+加载顺序保证了替换方向：本插件在 profile 的 `dsh.profile.bundles` 里排在
+`@deepseek-ai/dsh-web-app` 之后，因此**后注册**、赢得该 cell。若哪天顺序被改，
+症状是头部只剩上游按钮、自定义条目消失——把本插件排到 web-app 之后即可。
 
 ## 预设（装了才出现）
 
