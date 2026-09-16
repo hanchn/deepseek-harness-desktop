@@ -1,8 +1,8 @@
 {
   "name": "dsh-market",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Market pages for the DSH Web UI Settings: CLI catalog (detect only, copy install command), skill marketplace (pinned-commit sources), and custom skill authoring.",
+  "description": "Market pages for the DSH Web UI Settings: CLI catalog (detect only, copy install command), a GitHub-Stars-ranked skill catalog with pinned-commit installs, and custom skill authoring grouped by ownership.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

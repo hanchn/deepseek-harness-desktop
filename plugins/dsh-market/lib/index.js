@@ -4,8 +4,9 @@
 //   * CLI catalog: resolve each curated binary on PATH and read its version.
 //     Detection ONLY — this plugin never installs anything; it hands the user an
 //     install command to copy.
-//   * Skill marketplace: browse a GitHub source pinned to a full commit, and
-//     install a skill directory into a workspace or user skill root.
+//   * Skill marketplace: a skill-repository catalog ranked by GitHub Stars,
+//     plus browse a GitHub source pinned to a full commit, and install a skill
+//     directory into a workspace or user skill root.
 //   * Custom skills: create/update/remove skills this plugin authored.
 //
 // Supply-chain stance (mirrors this repository's vendored-skill discipline):
@@ -15,13 +16,16 @@
 //   * a skill directory this plugin did not create is READ-ONLY here. The
 //     repository vendors packs into `.agents/skills` and forbids hand-editing
 //     them, so an unmarked directory is listed and never written or deleted.
+//   * the catalog is a DISCOVERY surface only: Stars rank repositories for the
+//     page, and installing a catalog entry still goes through the same pinned
+//     commit + provenance path as a configured source.
 //
 // Security: node builtins only (a profile plugin cannot resolve harness
 // packages), argv-only child processes, no shell, bounded JSON bodies, and
 // every route behind `connection.requestRejection`.
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve as resolvePath, sep } from "node:path";
 
@@ -33,6 +37,7 @@ export const inject = ["webServer", "connection", "subprocess"];
 const PREFIX = "/dsh-market";
 const ROUTE = {
   cli: `${PREFIX}/cli`,
+  catalog: `${PREFIX}/catalog`,
   skills: `${PREFIX}/skills`,
   sources: `${PREFIX}/sources`,
   workspaces: `${PREFIX}/workspaces`,
@@ -48,6 +53,8 @@ const MARKER = ".dsh-market.json";
 /** A skill directory name; also the guard against path traversal. */
 const SKILL_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const COMMIT = /^[0-9a-f]{40}$/;
+/** `owner/name`; also the guard against a crafted repository identifier. */
+const REPO = /^[\w.-]+\/[\w.-]+$/;
 
 /** Built-in skill source. Verified reachable and stable at the pinned commit. */
 const BUILTIN_SOURCES = [
@@ -60,6 +67,22 @@ const BUILTIN_SOURCES = [
     license: "see repository",
   },
 ];
+
+/**
+ * Topics that carry agent-skill repositories. One search per topic, merged and
+ * sorted by stars: GitHub Stars are the only public per-repository "rating"
+ * available without an account. They rate the REPOSITORY, not a single skill —
+ * the page says so instead of implying a per-skill score.
+ */
+const CATALOG_TOPICS = ["agent-skills", "claude-skills", "claude-skill", "codex-skills"];
+/** Search results kept per topic before merging. */
+const CATALOG_PER_TOPIC = 30;
+/** Entries the page shows after merging and sorting by stars. */
+const CATALOG_LIMIT = 40;
+/** A cached catalog is served for this long before a refresh is attempted. */
+const CATALOG_TTL_MS = 6 * 60 * 60 * 1000;
+/** Never read a catalog cache file larger than this. */
+const CATALOG_MAX_BYTES = 1024 * 1024;
 
 class HttpError extends Error {
   constructor(status, code, message) {
@@ -98,7 +121,7 @@ function readSources() {
       const parsed = JSON.parse(readFileSync(file, "utf8"));
       for (const entry of Array.isArray(parsed?.skillSources) ? parsed.skillSources : []) {
         if (typeof entry?.id !== "string" || typeof entry?.repo !== "string") continue;
-        if (!/^[\w.-]+\/[\w.-]+$/.test(entry.repo)) continue;
+        if (!REPO.test(entry.repo)) continue;
         user.push({
           id: entry.id.trim(),
           label: typeof entry.label === "string" ? entry.label : entry.repo,
@@ -531,10 +554,219 @@ async function resolveSourceCommit(source) {
   return sha;
 }
 
+// ── rated skill catalog (GitHub Stars) ─────────────────────────────────────
+//
+// Discovery only. A catalog row carries no install authority: the page sends
+// the repository back through the same pinned-commit browse/install path as a
+// configured source, so nothing here can install a moving branch.
+
+function skillCatalogPath() {
+  return join(dshHome(), "market-catalog.json");
+}
+
+/**
+ * Whitelist one search result (or one cached row) into the shape the page
+ * renders. Never pass a GitHub payload through: the page must not be handed
+ * arbitrary fields from a remote response.
+ */
+function normalizeSkillRepo(raw) {
+  const repo = String(raw?.repo ?? raw?.full_name ?? "");
+  if (!REPO.test(repo)) return null;
+  const stars = Number(raw?.stars ?? raw?.stargazers_count);
+  const licenseField = raw?.license;
+  const license =
+    typeof licenseField === "string" && licenseField !== ""
+      ? licenseField
+      : typeof licenseField?.spdx_id === "string" && licenseField.spdx_id !== "NOASSERTION"
+        ? licenseField.spdx_id
+        : typeof licenseField?.name === "string"
+          ? licenseField.name
+          : null;
+  const homepage = raw?.homepage ?? raw?.html_url;
+  const pushedAt = raw?.pushedAt ?? raw?.pushed_at;
+  return {
+    repo,
+    label: typeof raw?.label === "string" && raw.label !== "" ? raw.label : (repo.split("/")[1] ?? repo),
+    description: typeof raw?.description === "string" ? raw.description.slice(0, 500) : "",
+    stars: Number.isFinite(stars) && stars > 0 ? Math.floor(stars) : 0,
+    homepage: typeof homepage === "string" && homepage !== "" ? homepage : `https://github.com/${repo}`,
+    license: license === null ? null : String(license).slice(0, 60),
+    pushedAt: typeof pushedAt === "string" ? pushedAt : null,
+  };
+}
+
+/** Last catalog we fetched, or null when there is none readable. */
+function readSkillCatalogCache() {
+  const file = skillCatalogPath();
+  let text;
+  try {
+    const stats = statSync(file);
+    if (!stats.isFile() || stats.size > CATALOG_MAX_BYTES) return null;
+    text = readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    const fetchedAtMs = Number(parsed?.fetchedAtMs);
+    if (!Number.isFinite(fetchedAtMs)) return null;
+    const items = (Array.isArray(parsed?.items) ? parsed.items : [])
+      .map(normalizeSkillRepo)
+      .filter((item) => item !== null)
+      .slice(0, CATALOG_LIMIT);
+    return {
+      items,
+      fetchedAtMs,
+      failures: (Array.isArray(parsed?.failures) ? parsed.failures : []).map(String).slice(0, 8),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort cache write: the page still gets the live result either way. */
+function writeSkillCatalogCache(catalog) {
+  const file = skillCatalogPath();
+  const body =
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        fetchedAtMs: catalog.fetchedAtMs,
+        topics: CATALOG_TOPICS,
+        failures: catalog.failures,
+        items: catalog.items,
+      },
+      null,
+      2,
+    ) + "\n";
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    const staging = `${file}.tmp`;
+    writeFileSync(staging, body);
+    renameSync(staging, file);
+  } catch {
+    /* cache is optional */
+  }
+}
+
+/**
+ * One stars-sorted search per topic, merged by repository and cut to the page's
+ * limit. A topic that fails degrades to a note instead of an empty catalog, but
+ * a total failure is an error the page must show.
+ */
+async function fetchSkillCatalog() {
+  const merged = new Map();
+  const failures = [];
+  for (const topic of CATALOG_TOPICS) {
+    try {
+      const payload = await githubJson(
+        `/search/repositories?q=${encodeURIComponent(`topic:${topic}`)}&sort=stars&order=desc&per_page=${CATALOG_PER_TOPIC}`,
+      );
+      for (const raw of Array.isArray(payload?.items) ? payload.items : []) {
+        const item = normalizeSkillRepo(raw);
+        if (item === null) continue;
+        const known = merged.get(item.repo);
+        if (known === undefined || item.stars > known.stars) merged.set(item.repo, item);
+      }
+    } catch (error) {
+      failures.push(`${topic}: ${String(error?.message ?? error)}`);
+    }
+  }
+  const items = [...merged.values()]
+    .sort((a, b) => b.stars - a.stars || a.repo.localeCompare(b.repo))
+    .slice(0, CATALOG_LIMIT);
+  if (items.length === 0) {
+    throw new HttpError(502, "github-error", `技能目录读取失败：${failures.join("；") || "GitHub 没有返回结果"}`);
+  }
+  return { items, fetchedAtMs: Date.now(), failures };
+}
+
+/** Cache first, one live fetch when it is stale or the page asked to refresh. */
+async function skillCatalog(url) {
+  const cached = readSkillCatalogCache();
+  const force = url.searchParams.get("refresh") === "1";
+  if (!force && cached !== null && Date.now() - cached.fetchedAtMs < CATALOG_TTL_MS) {
+    return { ...cached, cache: { status: "fresh" } };
+  }
+  try {
+    const live = await fetchSkillCatalog();
+    writeSkillCatalogCache(live);
+    return { ...live, cache: { status: "live" } };
+  } catch (error) {
+    // A stale catalog beats an empty page, and says it is stale.
+    if (cached !== null) return { ...cached, cache: { status: "offline" } };
+    throw error;
+  }
+}
+
 function findSource(id) {
   const source = readSources().sources.find((candidate) => candidate.id === id);
   if (source === undefined) throw new HttpError(404, "unknown-source", `unknown source: ${id}`);
   return source;
+}
+
+/**
+ * An ad-hoc source for one catalog repository. Its base path is empty on
+ * purpose: `browseSource`/`installSkill` then derive it from the tree.
+ */
+function repoSource(repo) {
+  const value = String(repo ?? "").trim();
+  if (!REPO.test(value)) {
+    throw new HttpError(400, "bad-request", `repo must look like owner/name: ${value === "" ? "(empty)" : value}`);
+  }
+  return {
+    id: value,
+    label: value,
+    repo: value,
+    path: "",
+    homepage: `https://github.com/${value}`,
+    license: "see repository",
+  };
+}
+
+/** A configured source id or a catalog repository; exactly one is required. */
+function resolveSource({ sourceId, repo }) {
+  if (typeof repo === "string" && repo.trim() !== "") return repoSource(repo);
+  return findSource(String(sourceId ?? ""));
+}
+
+/** One pinned commit's blob list — the single tree read browse and install share. */
+async function pinnedTree(source, ref) {
+  const pinned = COMMIT.test(String(ref)) ? ref : await resolveSourceCommit(source);
+  const tree = await githubJson(`/repos/${source.repo}/git/trees/${pinned}?recursive=1`);
+  const paths = (Array.isArray(tree?.tree) ? tree.tree : [])
+    .filter((entry) => entry?.type === "blob" && typeof entry.path === "string" && !entry.path.includes(".."))
+    .map((entry) => entry.path);
+  return { pinned, paths, truncated: tree?.truncated === true };
+}
+
+/**
+ * Where a repository keeps its skills.
+ *
+ * A configured source may pin `path` (the built-in one points at `skills/`). A
+ * catalog repository does not, so the base is derived from the tree: the
+ * directory holding the most `<name>/SKILL.md` children wins, ties going to the
+ * shallowest and then to name order. `""` means the repository root.
+ */
+function detectSkillsBase(paths) {
+  const counts = new Map();
+  for (const path of paths) {
+    const match = /^(.*?)([^/]+)\/SKILL\.md$/.exec(path);
+    if (match === null) continue;
+    const base = match[1].replace(/\/+$/, "");
+    counts.set(base, (counts.get(base) ?? 0) + 1);
+  }
+  const ranked = [...counts.entries()].sort(
+    (a, b) => b[1] - a[1] || a[0].length - b[0].length || a[0].localeCompare(b[0]),
+  );
+  return ranked.length === 0 ? "" : ranked[0][0];
+}
+
+/** The base to read a source at; an explicit request always wins. */
+function skillsBase(source, subPath, paths) {
+  const requested = typeof subPath === "string" ? subPath : source.path;
+  const explicit = String(requested ?? "").replace(/^\/+|\/+$/g, "");
+  return explicit === "" ? detectSkillsBase(paths) : explicit;
 }
 
 async function fetchRaw(repo, ref, path) {
@@ -552,25 +784,17 @@ async function fetchRaw(repo, ref, path) {
  * single API call and file bodies come from raw (not rate limited).
  */
 async function browseSource({ source, ref, subPath }) {
-  const pinned = COMMIT.test(String(ref)) ? ref : await resolveSourceCommit(source);
-  const tree = await githubJson(`/repos/${source.repo}/git/trees/${pinned}?recursive=1`);
-  const base = String(subPath ?? source.path ?? "").replace(/^\/+|\/+$/g, "");
+  const { pinned, paths, truncated } = await pinnedTree(source, ref);
+  const base = skillsBase(source, subPath, paths);
   const prefix = base === "" ? "" : `${base}/`;
-  const paths = [];
-  for (const entry of Array.isArray(tree?.tree) ? tree.tree : []) {
-    if (entry?.type !== "blob" || typeof entry.path !== "string") continue;
-    if (entry.path.includes("..")) continue;
-    if (prefix !== "" && !entry.path.startsWith(prefix)) continue;
-    paths.push(entry.path);
-  }
+  const inBase = paths.filter((path) => prefix === "" || path.startsWith(prefix));
   const skillDirs = new Map();
-  for (const path of paths) {
+  for (const path of inBase) {
     const relative = path.slice(prefix.length);
     const match = /^([^/]+)\/SKILL\.md$/.exec(relative);
-    if (match === null) continue;
-    skillDirs.set(match[1], []);
+    if (match !== null) skillDirs.set(match[1], []);
   }
-  for (const path of paths) {
+  for (const path of inBase) {
     const relative = path.slice(prefix.length);
     const slash = relative.indexOf("/");
     if (slash <= 0) continue;
@@ -601,7 +825,7 @@ async function browseSource({ source, ref, subPath }) {
     source: { id: source.id, label: source.label, repo: source.repo, homepage: source.homepage, license: source.license },
     ref: pinned,
     path: base,
-    truncated: tree?.truncated === true,
+    truncated: truncated === true,
     skills: names.map((skillName) => ({
       name: skillName,
       description: descriptions.get(skillName) ?? "",
@@ -622,27 +846,33 @@ function writeFileAt(rootDir, relative, content) {
   writeFileSync(target, content);
 }
 
-async function installSkill({ sourceId, ref, skillName, scope, root, confirm }) {
+async function installSkill({ source, ref, skillName, scope, root, subPath, confirm }) {
   if (confirm !== true) {
     throw new HttpError(400, "confirmation-required", "安装前需要显式确认");
   }
-  const source = findSource(sourceId);
   assertSkillName(skillName);
-  const pinned = COMMIT.test(String(ref)) ? ref : await resolveSourceCommit(source);
+  const { pinned, paths, truncated } = await pinnedTree(source, ref);
+  // A truncated tree would silently install a partial skill, so refuse it here.
+  if (truncated) {
+    throw new HttpError(
+      502,
+      "tree-truncated",
+      `${source.repo} 的文件树超过 GitHub 单次响应上限，无法保证安装完整；请改用更小的仓库`,
+    );
+  }
   const { dir } = resolveScope(scope, root);
-  const base = String(source.path ?? "").replace(/^\/+|\/+$/g, "");
+  const base = skillsBase(source, subPath, paths);
   const prefix = base === "" ? "" : `${base}/`;
   // An existing directory that this plugin does not own is never overwritten.
   assertOwned(dir, skillName, { allowMissing: true });
 
-  const tree = await githubJson(`/repos/${source.repo}/git/trees/${pinned}?recursive=1`);
   const skillPrefix = `${prefix}${skillName}/`;
-  const files = (Array.isArray(tree?.tree) ? tree.tree : [])
-    .filter((entry) => entry?.type === "blob" && typeof entry.path === "string" && entry.path.startsWith(skillPrefix))
-    .map((entry) => entry.path.slice(skillPrefix.length))
-    .filter((relative) => relative !== "" && !relative.includes(".."));
+  const files = paths
+    .filter((path) => path.startsWith(skillPrefix))
+    .map((path) => path.slice(skillPrefix.length))
+    .filter((relative) => relative !== "");
   if (!files.includes("SKILL.md")) {
-    throw new HttpError(404, "no-skill", `${source.repo}@${pinned.slice(0, 7)} 里没有 ${skillName}/SKILL.md`);
+    throw new HttpError(404, "no-skill", `${source.repo}@${pinned.slice(0, 7)} 里没有 ${skillPrefix}SKILL.md`);
   }
 
   const target = join(dir, skillName);
@@ -669,7 +899,7 @@ async function installSkill({ sourceId, ref, skillName, scope, root, confirm }) 
       "",
     ].join("\n"),
   );
-  return { installed: skillName, dir: target, ref: pinned, files: files.length };
+  return { installed: skillName, dir: target, ref: pinned, path: base, files: files.length };
 }
 
 function saveSkill({ scope, root, skillName, description, body }) {
@@ -782,6 +1012,7 @@ export function apply(ctx) {
   };
 
   register("GET", ROUTE.cli, async () => detectTools(ctx));
+  register("GET", ROUTE.catalog, async (_payload, url) => skillCatalog(url));
   register("GET", ROUTE.workspaces, async () => ({ workspaces: listWorkspaces() }));
   register("GET", ROUTE.sources, async () => {
     const { sources, error, configPath } = readSources();
@@ -806,12 +1037,15 @@ export function apply(ctx) {
     "GET",
     ROUTE.browse,
     async (_payload, url) => {
-      const sourceId = url.searchParams.get("source") ?? "";
-      const source = findSource(sourceId);
+      const source = resolveSource({
+        sourceId: url.searchParams.get("source"),
+        repo: url.searchParams.get("repo"),
+      });
+      const path = url.searchParams.get("path");
       return browseSource({
         source,
         ref: url.searchParams.get("ref") ?? "",
-        subPath: url.searchParams.get("path") ?? source.path,
+        subPath: path === null ? undefined : path,
       });
     },
   );
@@ -819,7 +1053,10 @@ export function apply(ctx) {
     "GET",
     ROUTE.resolve,
     async (_payload, url) => {
-      const source = findSource(url.searchParams.get("source") ?? "");
+      const source = resolveSource({
+        sourceId: url.searchParams.get("source"),
+        repo: url.searchParams.get("repo"),
+      });
       return { source: source.id, ref: await resolveSourceCommit(source) };
     },
   );
@@ -828,11 +1065,15 @@ export function apply(ctx) {
     ROUTE.install,
     async (payload) =>
       installSkill({
-        sourceId: String(payload.source ?? ""),
+        source: resolveSource({
+          sourceId: payload.source,
+          repo: typeof payload.repo === "string" ? payload.repo : undefined,
+        }),
         ref: String(payload.ref ?? ""),
         skillName: String(payload.skill ?? ""),
         scope: String(payload.scope ?? "user"),
         root: typeof payload.root === "string" ? payload.root : undefined,
+        subPath: typeof payload.path === "string" ? payload.path : undefined,
         confirm: payload.confirm === true,
       }),
     { body: true },

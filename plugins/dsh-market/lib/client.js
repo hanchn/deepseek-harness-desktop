@@ -53,7 +53,18 @@ window.__ModuleLoader__.load({
       "cli.failed": "读取 CLI 目录失败：{detail}",
       "cli.versionUnknown": "版本未知",
       "skills.title": "Skill 市场",
-      "skills.subtitle": "从固定 commit 安装，装完会写下 SOURCE.md 溯源；不会覆盖本仓库 vendored 的技能。",
+      "skills.subtitle": "按 GitHub Stars 排序挑选技能仓库，再固定到某个 commit 安装；装完写下 SOURCE.md 溯源，不会覆盖本仓库 vendored 的技能。",
+      "skills.catalog": "技能目录（按 GitHub Stars 排序）",
+      "skills.ratingNote": "评分是仓库的 GitHub Stars，不是单个技能的评分；安装只认固定 commit。",
+      "skills.refreshCatalog": "刷新目录",
+      "skills.catalogUpdated": "目录更新于 {time}",
+      "skills.catalogOffline": "刷新失败，显示上次成功的结果（{time}）",
+      "skills.catalogPartial": "部分主题刷新失败：{detail}",
+      "skills.catalogFailed": "读取技能目录失败：{detail}",
+      "skills.catalogEmpty": "目录里还没有条目，点「刷新目录」重试。",
+      "skills.filter": "筛选仓库名…",
+      "skills.sourceSection": "或按固定来源浏览",
+      "skills.truncated": "这个仓库的文件树被 GitHub 截断，列表可能不完整；安装会被拒绝。",
       "skills.source": "来源",
       "skills.pin": "固定到 commit",
       "skills.resolve": "解析最新 commit",
@@ -67,7 +78,11 @@ window.__ModuleLoader__.load({
       "skills.installFailed": "安装失败：{detail}",
       "skills.alreadyThere": "同名目录已存在",
       "custom.title": "自定义 Skill",
-      "custom.subtitle": "在这里创建和修改你自己的技能；不是本页创建的目录只会列出，不会被改动。",
+      "custom.subtitle": "管理你自己的技能：本页创建的可以编辑，来源安装的可以删除，其余目录只读。",
+      "custom.groupCustom": "本页创建",
+      "custom.groupSource": "来源安装",
+      "custom.groupReadonly": "已安装（只读）",
+      "custom.groupCount": "{count} 个",
       "custom.new": "新建技能",
       "custom.edit": "编辑",
       "custom.name": "名称（小写字母/数字/连字符）",
@@ -121,7 +136,18 @@ window.__ModuleLoader__.load({
       "cli.failed": "Could not read the CLI catalog: {detail}",
       "cli.versionUnknown": "version unknown",
       "skills.title": "Skill market",
-      "skills.subtitle": "Installs from a pinned commit and writes SOURCE.md provenance; vendored skills in this repository are never overwritten.",
+      "skills.subtitle": "Pick a skill repository ranked by GitHub Stars, then install it pinned to a commit; every install writes SOURCE.md provenance and never overwrites the skills vendored in this repository.",
+      "skills.catalog": "Skill catalog (ranked by GitHub Stars)",
+      "skills.ratingNote": "The rating is the repository's GitHub Stars, not a per-skill score; installs only ever use a pinned commit.",
+      "skills.refreshCatalog": "Refresh catalog",
+      "skills.catalogUpdated": "Catalog updated {time}",
+      "skills.catalogOffline": "Refresh failed — showing the last successful result ({time})",
+      "skills.catalogPartial": "Some topics failed to refresh: {detail}",
+      "skills.catalogFailed": "Could not read the skill catalog: {detail}",
+      "skills.catalogEmpty": "The catalog has no entries yet — try refreshing.",
+      "skills.filter": "Filter repositories…",
+      "skills.sourceSection": "Or browse a fixed source",
+      "skills.truncated": "GitHub truncated this repository's file tree, so the list may be incomplete; installing from it is refused.",
       "skills.source": "Source",
       "skills.pin": "Pinned to commit",
       "skills.resolve": "Resolve latest commit",
@@ -135,7 +161,11 @@ window.__ModuleLoader__.load({
       "skills.installFailed": "Install failed: {detail}",
       "skills.alreadyThere": "a directory with this name exists",
       "custom.title": "Custom skills",
-      "custom.subtitle": "Create and edit your own skills here. Directories this page did not create are listed but never modified.",
+      "custom.subtitle": "Manage your own skills here: skills this page created can be edited, source installs can be deleted, everything else is read-only.",
+      "custom.groupCustom": "Created here",
+      "custom.groupSource": "From source",
+      "custom.groupReadonly": "Installed (read-only)",
+      "custom.groupCount": "{count}",
       "custom.new": "New skill",
       "custom.edit": "Edit",
       "custom.name": "Name (lowercase letters, digits, hyphens)",
@@ -214,6 +244,19 @@ window.__ModuleLoader__.load({
 .mk-ok { font-size: 12px; color: #3fb950; }
 .mk-list { display: flex; flex-direction: column; gap: 8px; }
 .mk-confirm { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 7px 9px; border-radius: 8px; background: var(--dsw-alias-interactive-bg-hover, #ffffff14); font-size: 12px; }
+.mk-hr { height: 1px; border: 0; margin: 2px 0; background: var(--dsw-alias-border-l1, #ffffff12); }
+.mk-cards { display: flex; flex-direction: column; gap: 8px; max-height: 330px; overflow-y: auto; padding-right: 2px; }
+.mk-badge[data-tone="rating"] { color: #d29922; border-color: #d2992266; font-variant-numeric: tabular-nums; }
+.mk-group { display: flex; flex-direction: column; gap: 8px; }
+.mk-group-head {
+  display: flex; align-items: center; gap: 6px; padding: 2px 0; border: 0; background: transparent;
+  cursor: pointer; font: inherit; font-size: 12px; font-weight: 600;
+  color: var(--dsw-alias-label-secondary, #a6a6a6);
+}
+.mk-group-head:hover { color: var(--dsw-alias-label-primary, #f5f5f5); }
+.mk-caret { font-size: 10px; color: var(--dsw-alias-label-tertiary, #8c8c8c); }
+.mk-details { display: flex; flex-direction: column; gap: 8px; }
+.mk-details > summary { cursor: pointer; }
 `;
 
     function injectStyles() {
@@ -258,6 +301,24 @@ window.__ModuleLoader__.load({
       const text = search.toString();
       return text === "" ? "" : `?${text}`;
     };
+
+    /** 12345 → "12.3k". Stars only, so the page needs no locale number format. */
+    function formatStars(value) {
+      const stars = Number(value);
+      if (!Number.isFinite(stars) || stars <= 0) return "0";
+      if (stars < 1000) return String(Math.floor(stars));
+      const thousands = stars / 1000;
+      return `${thousands >= 10 ? Math.round(thousands) : thousands.toFixed(1)}k`;
+    }
+
+    /** Local stamp for a cache timestamp; a bad value must not break the panel. */
+    function formatStamp(ms) {
+      try {
+        return new Date(Number(ms)).toLocaleString();
+      } catch {
+        return "";
+      }
+    }
 
     // ── shared bits ────────────────────────────────────────────────────────
     function CopyButton({ text, t, label }) {
@@ -418,45 +479,82 @@ window.__ModuleLoader__.load({
     }
 
     // ── tab 2: skill market ────────────────────────────────────────────────
+    //
+    // Discovery is separate from installation on purpose: the catalog ranks
+    // repositories by GitHub Stars, and picking one only ever browses it at a
+    // resolved commit. The install then happens against that pin, never a branch.
     function SkillMarketTab({ t, api, scope, root }) {
       const [sources, setSources] = useState(null);
       const [sourceId, setSourceId] = useState("");
+      const [catalog, setCatalog] = useState({ status: "loading", items: [], fetchedAtMs: null, cache: null, failures: [] });
+      const [filter, setFilter] = useState("");
+      /** Where the visible listing came from: a catalog repo or a fixed source. */
+      const [target, setTarget] = useState(null);
       const [listing, setListing] = useState(null);
-      const [ref, setRef] = useState("");
       const [busy, setBusy] = useState("");
       const [error, setError] = useState(null);
       const [notice, setNotice] = useState(null);
       const [confirming, setConfirming] = useState(null);
+
+      const loadCatalog = (refresh) => {
+        setBusy(refresh ? "catalog:refresh" : "catalog");
+        setError(null);
+        api
+          .catalog(refresh)
+          .then((data) =>
+            setCatalog({
+              status: "ready",
+              items: Array.isArray(data?.items) ? data.items : [],
+              fetchedAtMs: data?.fetchedAtMs ?? null,
+              cache: data?.cache?.status ?? "live",
+              failures: Array.isArray(data?.failures) ? data.failures : [],
+            }),
+          )
+          .catch((failure) =>
+            setCatalog((previous) => ({ ...previous, status: "error", detail: String(failure?.message ?? failure) })),
+          )
+          .finally(() => setBusy(""));
+      };
+
+      useEffect(() => {
+        loadCatalog(false);
+      }, []);
 
       useEffect(() => {
         api
           .sources()
           .then((data) => {
             setSources(data);
-            if (data.sources.length > 0) setSourceId(data.sources[0].id);
+            const first = Array.isArray(data?.sources) ? data.sources[0] : null;
+            if (first) setSourceId((current) => (current === "" ? first.id : current));
           })
-          .catch((failure) => setError(String(failure?.message ?? failure)));
+          .catch((failure) => setSources({ sources: [], configError: String(failure?.message ?? failure) }));
       }, []);
 
-      const browse = () => {
-        setBusy("browse");
+      const openListing = (nextTarget) => {
+        setBusy(nextTarget.kind === "catalog" ? `browse:${nextTarget.repo}` : "browse");
         setError(null);
         setNotice(null);
-        api
-          .browse(sourceId)
+        setConfirming(null);
+        const request = nextTarget.kind === "catalog" ? api.browseRepo(nextTarget.repo) : api.browse(nextTarget.id);
+        request
           .then((data) => {
             setListing(data);
-            setRef(data.ref);
+            setTarget(nextTarget);
           })
           .catch((failure) => setError(String(failure?.message ?? failure)))
           .finally(() => setBusy(""));
       };
 
       const install = (skillName) => {
+        if (target === null || listing === null) return;
         setBusy(`install:${skillName}`);
         setError(null);
+        // The browsed base path travels with the install so the pinned commit
+        // and the pinned directory always belong to the same listing.
+        const identity = target.kind === "catalog" ? { repo: target.repo } : { source: target.id };
         api
-          .install({ source: sourceId, ref, skill: skillName, scope, root, confirm: true })
+          .install({ ...identity, ref: listing.ref, path: listing.path, skill: skillName, scope, root, confirm: true })
           .then((result) => {
             setNotice(t("skills.installed", { name: result.installed }));
             setConfirming(null);
@@ -465,118 +563,228 @@ window.__ModuleLoader__.load({
           .finally(() => setBusy(""));
       };
 
+      const needle = filter.trim().toLowerCase();
+      const items =
+        needle === ""
+          ? catalog.items
+          : catalog.items.filter((item) =>
+              `${item.repo} ${item.description ?? ""}`.toLowerCase().includes(needle),
+            );
+
       return h(
         "div",
         { class: "mk" },
         h("div", { class: "mk-sub" }, t("skills.subtitle")),
+        h("div", { class: "mk-note" }, t("skills.ratingNote")),
+        error ? h("div", { class: "mk-err" }, error) : null,
+        notice ? h("div", { class: "mk-ok" }, notice) : null,
         h(
           "div",
           { class: "mk-row" },
-          h("span", { class: "mk-label" }, t("skills.source")),
+          h("span", { class: "mk-label" }, t("skills.catalog")),
+          catalog.items.length > 0 ? h("span", { class: "mk-badge" }, String(catalog.items.length)) : null,
+          h("div", { class: "mk-spacer" }),
           h(
-            "select",
-            {
-              class: "mk-select mk-wide",
-              value: sourceId,
-              "aria-label": t("skills.source"),
-              onChange: (event) => {
-                setSourceId(event.target.value);
-                setListing(null);
-                setRef("");
-              },
-            },
-            ...(sources?.sources ?? []).map((source) =>
-              h("option", { key: source.id, value: source.id }, `${source.label} (${source.repo})`),
-            ),
+            "button",
+            { class: "mk-btn", disabled: busy !== "", onClick: () => loadCatalog(true) },
+            busy === "catalog:refresh" ? t("common.loading") : t("skills.refreshCatalog"),
           ),
-          h("button", { class: "mk-btn", disabled: !sourceId || busy !== "", onClick: browse }, t("skills.browse")),
         ),
-        sources?.configError ? h("div", { class: "mk-err" }, sources.configError) : null,
-        ref ? h("div", { class: "mk-mono" }, t("skills.pinnedAt", { ref })) : h("div", { class: "mk-note" }, t("skills.pin")),
-        h(
-          "div",
-          { class: "mk-scope" },
-          h("span", null, t("scope.label")),
-          h("span", { class: "mk-badge" }, scope === "user" ? t("scope.user") : t("scope.workspace")),
-          h("span", { class: "mk-mono" }, scope === "user" ? "" : (root ?? "")),
-        ),
-        error ? h("div", { class: "mk-err" }, error) : null,
-        notice ? h("div", { class: "mk-ok" }, notice) : null,
-        busy === "browse" ? h("div", { class: "mk-sub" }, t("common.loading")) : null,
-        listing
-          ? listing.skills.length === 0
-            ? h("div", { class: "mk-sub" }, t("skills.empty"))
-            : h(
-                "div",
-                { class: "mk-list" },
-                ...listing.skills.map((skill) =>
+        catalog.status === "loading" ? h("div", { class: "mk-sub" }, t("common.loading")) : null,
+        catalog.status === "error" ? h("div", { class: "mk-err" }, t("skills.catalogFailed", { detail: catalog.detail })) : null,
+        catalog.status === "ready" && catalog.fetchedAtMs !== null
+          ? h(
+              "div",
+              { class: "mk-note" },
+              catalog.cache === "offline"
+                ? t("skills.catalogOffline", { time: formatStamp(catalog.fetchedAtMs) })
+                : t("skills.catalogUpdated", { time: formatStamp(catalog.fetchedAtMs) }),
+            )
+          : null,
+        catalog.status === "ready" && catalog.failures.length > 0
+          ? h("div", { class: "mk-note" }, t("skills.catalogPartial", { detail: catalog.failures.join("; ") }))
+          : null,
+        catalog.status === "ready" && catalog.items.length === 0
+          ? h("div", { class: "mk-sub" }, t("skills.catalogEmpty"))
+          : null,
+        catalog.status === "ready" && catalog.items.length > 0
+          ? h("input", {
+              class: "mk-input",
+              value: filter,
+              spellcheck: "false",
+              placeholder: t("skills.filter"),
+              "aria-label": t("skills.filter"),
+              onChange: (event) => setFilter(event.target.value),
+            })
+          : null,
+        items.length > 0
+          ? h(
+              "div",
+              { class: "mk-cards" },
+              ...items.map((item) =>
+                h(
+                  "div",
+                  { key: item.repo, class: "mk-card" },
                   h(
                     "div",
-                    { key: skill.name, class: "mk-card" },
+                    { class: "mk-card-head" },
+                    h("span", { class: "mk-name" }, item.repo),
                     h(
-                      "div",
-                      { class: "mk-card-head" },
-                      h("span", { class: "mk-name" }, skill.name),
-                      h("span", { class: "mk-badge" }, t("common.files", { count: skill.files })),
-                      h("div", { class: "mk-spacer" }),
-                      confirming === skill.name
-                        ? null
-                        : h(
-                            "button",
-                            {
-                              class: "mk-btn",
-                              "data-variant": "primary",
-                              disabled: busy !== "" || (scope === "workspace" && !root),
-                              onClick: () => setConfirming(skill.name),
-                            },
-                            t("common.install"),
-                          ),
+                      "span",
+                      { class: "mk-badge", "data-tone": "rating", title: t("skills.ratingNote") },
+                      `★ ${formatStars(item.stars)}`,
                     ),
-                    skill.description ? h("div", { class: "mk-desc" }, skill.description) : null,
-                    confirming === skill.name
-                      ? h(
-                          "div",
-                          { class: "mk-confirm" },
-                          h(
-                            "span",
-                            null,
-                            t("skills.installConfirm", {
-                              name: skill.name,
-                              repo: listing.source.repo,
-                              ref: ref.slice(0, 7),
-                            }),
-                          ),
-                          h(
-                            "button",
-                            {
-                              class: "mk-btn",
-                              "data-variant": "primary",
-                              disabled: busy !== "",
-                              onClick: () => install(skill.name),
-                            },
-                            busy === `install:${skill.name}` ? t("skills.installing") : t("common.confirm"),
-                          ),
-                          h(
-                            "button",
-                            { class: "mk-btn", disabled: busy !== "", onClick: () => setConfirming(null) },
-                            t("common.cancel"),
-                          ),
-                        )
-                      : null,
+                    item.license ? h("span", { class: "mk-badge" }, item.license) : null,
+                    h("div", { class: "mk-spacer" }),
+                    h(
+                      "button",
+                      {
+                        class: "mk-btn",
+                        "data-variant":
+                          target?.kind === "catalog" && target.repo === item.repo ? "primary" : null,
+                        disabled: busy !== "",
+                        onClick: () => openListing({ kind: "catalog", repo: item.repo }),
+                      },
+                      t("skills.browse"),
+                    ),
                   ),
+                  item.description ? h("div", { class: "mk-desc" }, item.description) : null,
                 ),
-              )
+              ),
+            )
           : null,
+        listing !== null
+          ? h(
+              "div",
+              { class: "mk" },
+              h("hr", { class: "mk-hr" }),
+              h(
+                "div",
+                { class: "mk-row" },
+                h("span", { class: "mk-label" }, t("skills.pinnedAt", { ref: String(listing.ref).slice(0, 7) })),
+                h("span", { class: "mk-badge" }, listing.source.repo),
+                h("span", { class: "mk-mono" }, listing.path === "" ? "/" : listing.path),
+              ),
+              listing.truncated ? h("div", { class: "mk-err" }, t("skills.truncated")) : null,
+              listing.skills.length === 0
+                ? h("div", { class: "mk-sub" }, t("skills.empty"))
+                : h(
+                    "div",
+                    { class: "mk-list" },
+                    ...listing.skills.map((skill) =>
+                      h(
+                        "div",
+                        { key: skill.name, class: "mk-card" },
+                        h(
+                          "div",
+                          { class: "mk-card-head" },
+                          h("span", { class: "mk-name" }, skill.name),
+                          h("span", { class: "mk-badge" }, t("common.files", { count: skill.files })),
+                          h("div", { class: "mk-spacer" }),
+                          confirming === skill.name
+                            ? null
+                            : h(
+                                "button",
+                                {
+                                  class: "mk-btn",
+                                  "data-variant": "primary",
+                                  disabled: busy !== "" || listing.truncated || (scope === "workspace" && !root),
+                                  onClick: () => setConfirming(skill.name),
+                                },
+                                t("common.install"),
+                              ),
+                        ),
+                        skill.description ? h("div", { class: "mk-desc" }, skill.description) : null,
+                        confirming === skill.name
+                          ? h(
+                              "div",
+                              { class: "mk-confirm" },
+                              h(
+                                "span",
+                                null,
+                                t("skills.installConfirm", {
+                                  name: skill.name,
+                                  repo: listing.source.repo,
+                                  ref: String(listing.ref).slice(0, 7),
+                                }),
+                              ),
+                              h(
+                                "button",
+                                {
+                                  class: "mk-btn",
+                                  "data-variant": "primary",
+                                  disabled: busy !== "",
+                                  onClick: () => install(skill.name),
+                                },
+                                busy === `install:${skill.name}` ? t("skills.installing") : t("common.confirm"),
+                              ),
+                              h(
+                                "button",
+                                { class: "mk-btn", disabled: busy !== "", onClick: () => setConfirming(null) },
+                                t("common.cancel"),
+                              ),
+                            )
+                          : null,
+                      ),
+                    ),
+                  ),
+            )
+          : null,
+        h(
+          "details",
+          { class: "mk-details" },
+          h("summary", { class: "mk-note" }, t("skills.sourceSection")),
+          h(
+            "div",
+            { class: "mk" },
+            h(
+              "div",
+              { class: "mk-row" },
+              h("span", { class: "mk-label" }, t("skills.source")),
+              h(
+                "select",
+                {
+                  class: "mk-select mk-wide",
+                  value: sourceId,
+                  "aria-label": t("skills.source"),
+                  onChange: (event) => setSourceId(event.target.value),
+                },
+                ...((sources?.sources ?? []).map((source) =>
+                  h("option", { key: source.id, value: source.id }, `${source.label} (${source.repo})`),
+                )),
+              ),
+              h(
+                "button",
+                {
+                  class: "mk-btn",
+                  disabled: !sourceId || busy !== "",
+                  onClick: () => openListing({ kind: "source", id: sourceId }),
+                },
+                t("skills.browse"),
+              ),
+            ),
+            h("div", { class: "mk-note" }, t("skills.pin")),
+            sources?.configError ? h("div", { class: "mk-err" }, sources.configError) : null,
+          ),
+        ),
       );
     }
 
     // ── tab 3: custom skills ───────────────────────────────────────────────
+    //
+    // One inventory, three groups: what this page authored, what it installed
+    // from a pinned source, and everything it merely found (read-only, collapsed
+    // by default). Without the grouping this tab reads like a second catalog,
+    // because a skills root is mostly third-party directories.
+    const SKILL_GROUPS = ["custom", "source", "readonly"];
+
     function CustomSkillTab({ t, api, scope, root }) {
       const [data, setData] = useState(null);
       const [error, setError] = useState(null);
       const [notice, setNotice] = useState(null);
       const [form, setForm] = useState(null);
       const [confirming, setConfirming] = useState(null);
+      const [openGroups, setOpenGroups] = useState({ custom: true, source: true, readonly: false });
 
       const load = () => {
         setError(null);
@@ -610,6 +818,74 @@ window.__ModuleLoader__.load({
           })
           .catch((failure) => setError(t("custom.removeFailed", { detail: String(failure?.message ?? failure) })));
       };
+
+      const groupLabel = (id) =>
+        id === "custom" ? t("custom.groupCustom") : id === "source" ? t("custom.groupSource") : t("custom.groupReadonly");
+
+      /** Unknown or missing provenance counts as read-only, never as editable. */
+      const groupOf = (skill) => (skill.origin === "custom" || skill.origin === "source" ? skill.origin : "readonly");
+
+      const skillCard = (skill) =>
+        h(
+          "div",
+          { key: skill.name, class: "mk-card" },
+          h(
+            "div",
+            { class: "mk-card-head" },
+            h("span", { class: "mk-name" }, skill.name),
+            h(
+              "span",
+              { class: "mk-badge", "data-tone": groupOf(skill) === "readonly" ? "warn" : "ok" },
+              skill.origin === "custom" ? t("custom.byPage") : skill.origin === "source" ? t("custom.bySource") : t("custom.readonly"),
+            ),
+            h("span", { class: "mk-badge" }, t("common.files", { count: skill.files })),
+            h("div", { class: "mk-spacer" }),
+            skill.origin === "custom"
+              ? h(
+                  "button",
+                  {
+                    class: "mk-btn",
+                    onClick: () => setForm({ name: skill.name, description: skill.description, body: skill.body }),
+                  },
+                  t("custom.edit"),
+                )
+              : null,
+            skill.origin === "readonly"
+              ? null
+              : h(
+                  "button",
+                  { class: "mk-btn", "data-variant": "danger", onClick: () => setConfirming(skill.name) },
+                  t("common.remove"),
+                ),
+          ),
+          skill.description ? h("div", { class: "mk-desc" }, skill.description) : null,
+          skill.origin === "readonly"
+            ? h("div", { class: "mk-note" }, t("custom.readonlyNote", { dir: skill.dir }))
+            : h("div", { class: "mk-mono" }, skill.dir),
+          skill.source
+            ? h("div", { class: "mk-mono" }, `${skill.source.repo} @ ${String(skill.source.ref).slice(0, 7)}`)
+            : null,
+          confirming === skill.name
+            ? h(
+                "div",
+                { class: "mk-confirm" },
+                h("span", null, t("custom.removeConfirm", { name: skill.name })),
+                h(
+                  "button",
+                  { class: "mk-btn", "data-variant": "danger", onClick: () => remove(skill.name) },
+                  t("common.confirm"),
+                ),
+                h("button", { class: "mk-btn", onClick: () => setConfirming(null) }, t("common.cancel")),
+              )
+            : null,
+        );
+
+      const groups =
+        data === null
+          ? []
+          : SKILL_GROUPS.map((id) => ({ id, skills: data.skills.filter((skill) => groupOf(skill) === id) })).filter(
+              (group) => group.skills.length > 0,
+            );
 
       return h(
         "div",
@@ -700,72 +976,23 @@ window.__ModuleLoader__.load({
           ? h("div", { class: "mk-sub" }, t("common.loading"))
           : data.skills.length === 0
             ? h("div", { class: "mk-sub" }, t("custom.none"))
-            : h(
-                "div",
-                { class: "mk-list" },
-                ...data.skills.map((skill) =>
+            : groups.map((group) =>
+                h(
+                  "div",
+                  { key: group.id, class: "mk-group" },
                   h(
-                    "div",
-                    { key: skill.name, class: "mk-card" },
-                    h(
-                      "div",
-                      { class: "mk-card-head" },
-                      h("span", { class: "mk-name" }, skill.name),
-                      h(
-                        "span",
-                        { class: "mk-badge", "data-tone": skill.origin === "readonly" ? "warn" : "ok" },
-                        skill.origin === "custom"
-                          ? t("custom.byPage")
-                          : skill.origin === "source"
-                            ? t("custom.bySource")
-                            : t("custom.readonly"),
-                      ),
-                      h("span", { class: "mk-badge" }, t("common.files", { count: skill.files })),
-                      h("div", { class: "mk-spacer" }),
-                      skill.origin === "custom"
-                        ? h(
-                            "button",
-                            {
-                              class: "mk-btn",
-                              onClick: () =>
-                                setForm({ name: skill.name, description: skill.description, body: skill.body }),
-                            },
-                            t("custom.edit"),
-                          )
-                        : null,
-                      skill.origin === "readonly"
-                        ? null
-                        : h(
-                            "button",
-                            { class: "mk-btn", "data-variant": "danger", onClick: () => setConfirming(skill.name) },
-                            t("common.remove"),
-                          ),
-                    ),
-                    skill.description ? h("div", { class: "mk-desc" }, skill.description) : null,
-                    skill.origin === "readonly"
-                      ? h("div", { class: "mk-note" }, t("custom.readonlyNote", { dir: skill.dir }))
-                      : h("div", { class: "mk-mono" }, skill.dir),
-                    skill.source
-                      ? h("div", { class: "mk-mono" }, `${skill.source.repo} @ ${String(skill.source.ref).slice(0, 7)}`)
-                      : null,
-                    confirming === skill.name
-                      ? h(
-                          "div",
-                          { class: "mk-confirm" },
-                          h("span", null, t("custom.removeConfirm", { name: skill.name })),
-                          h(
-                            "button",
-                            {
-                              class: "mk-btn",
-                              "data-variant": "danger",
-                              onClick: () => remove(skill.name),
-                            },
-                            t("common.confirm"),
-                          ),
-                          h("button", { class: "mk-btn", onClick: () => setConfirming(null) }, t("common.cancel")),
-                        )
-                      : null,
+                    "button",
+                    {
+                      type: "button",
+                      class: "mk-group-head",
+                      "data-open": openGroups[group.id] ? "1" : "0",
+                      "aria-expanded": openGroups[group.id] ? "true" : "false",
+                      onClick: () => setOpenGroups({ ...openGroups, [group.id]: !openGroups[group.id] }),
+                    },
+                    h("span", { class: "mk-caret" }, openGroups[group.id] ? "▾" : "▸"),
+                    h("span", null, `${groupLabel(group.id)} · ${t("custom.groupCount", { count: group.skills.length })}`),
                   ),
+                  openGroups[group.id] ? h("div", { class: "mk-list" }, ...group.skills.map(skillCard)) : null,
                 ),
               ),
       );
@@ -875,10 +1102,12 @@ window.__ModuleLoader__.load({
 
       const api = {
         cli: () => getJson("/dsh-market/cli"),
+        catalog: (refresh) => getJson(`/dsh-market/catalog${refresh ? "?refresh=1" : ""}`),
         workspaces: () => getJson("/dsh-market/workspaces"),
         sources: () => getJson("/dsh-market/sources"),
         skills: (scope, root) => getJson(`/dsh-market/skills${query({ scope, root })}`),
         browse: (source, path) => getJson(`/dsh-market/source/browse${query({ source, path })}`),
+        browseRepo: (repo, path) => getJson(`/dsh-market/source/browse${query({ repo, path })}`),
         resolve: (source) => getJson(`/dsh-market/source/resolve${query({ source })}`),
         install: (body) => postJson("/dsh-market/skills/install", body),
         save: (body) => postJson("/dsh-market/skills/save", body),

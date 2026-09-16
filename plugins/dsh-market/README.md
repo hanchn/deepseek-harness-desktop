@@ -5,8 +5,8 @@
 | tab | 做什么 |
 |---|---|
 | **CLI 市场** | 检测本机已装的 CLI 与版本，给出官方安装命令供复制。**绝不自作主张代跑安装器。** |
-| **Skill 市场** | 从**固定 commit** 的 GitHub 源浏览技能并安装到工作区或用户级技能根，装完写 `SOURCE.md` 溯源。 |
-| **自定义 Skill** | 在本页创建/编辑/删除自己的技能（写 `SKILL.md` + 标记）。 |
+| **Skill 市场** | 按 **GitHub Stars** 排序的技能仓库目录（可筛选），选中后固定到某个 commit 浏览并安装到工作区或用户级技能根，装完写 `SOURCE.md` 溯源。固定来源的浏览入口仍保留在页面底部。 |
+| **自定义 Skill** | 管理你自己的技能，按归属分三组：**本页创建**（可编辑）、**来源安装**（可删）、**已安装（只读）**（默认折叠，只列出）。 |
 
 ## 为什么是独立插件
 
@@ -30,6 +30,22 @@ vendored 技能从固定版本物化、留 `SOURCE.md`、**不许手改**。本�
 
    所以本仓库 `.agents/skills` 里那 57 个 vendored 技能、以及你在别处手写的技能，
    在本页都是只读的；要改请用编辑器直接改文件，或走仓库自己的同步脚本。
+
+## 评分目录（GitHub Stars）
+
+页面打开「Skill 市场」时按 **star 数从高到低**列出技能仓库，条目只做**发现**：
+
+- 主题：`agent-skills` / `claude-skills` / `claude-skill` / `codex-skills`，每个主题一次
+  `search/repositories`（`sort=stars`），合并去重后取前 40 条；某个主题失败只降级成一行提示，
+  全部失败才报错。
+- **评分是仓库的 stars，不是单个技能的评分**（GitHub 没有免认证的单技能评分），页面上明说了这点。
+- 结果缓存在 `$DSH_HOME/market-catalog.json`（6 小时 TTL，临时文件 + `rename` 原子写入，
+  超过 1 MiB 拒绝读取）。刷新失败时回退到上次成功的结果并标注「离线」；「刷新目录」按钮
+  （`?refresh=1`）绕开 TTL 重新拉取。
+- 点「浏览技能」后：先解析 40 位 commit，再从文件树里**推断技能根**（含最多
+  `<name>/SKILL.md` 的目录，平局取更浅的；`""` 表示仓库根），然后才列出可装技能。
+  安装请求把推断出的目录一起带上，保证「列出的」和「装下的」是同一棵树。
+- 文件树被 GitHub 截断（超大仓库）时**拒绝安装**——那会静默装出一个残缺技能。
 
 ## 安装位置
 
@@ -63,6 +79,10 @@ vendored 技能从固定版本物化、留 `SOURCE.md`、**不许手改**。本�
 }
 ```
 
+目录里的仓库不需要登记：`/dsh-market/source/browse?repo=owner/name` 与安装接口的
+`repo` 字段可以直接指任意公开仓库（技能根自动推断）。所以「Skill 市场」的目录条目
+无需写进 `market.json`；`market.json` 只用来固定常用来源和 `path`。
+
 ## 路由与安全
 
 全部在组合的 `connection` 信任栅栏之后（Host/Origin + 浏览器鉴权 cookie）：
@@ -70,21 +90,22 @@ vendored 技能从固定版本物化、留 `SOURCE.md`、**不许手改**。本�
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/dsh-market/cli` | 目录 + 检测结果 + 派生出的安装命令 |
+| GET | `/dsh-market/catalog?refresh=1` | 按 stars 排序的技能仓库目录（缓存 + 离线回退） |
 | GET | `/dsh-market/workspaces` | 工作区列表（只读注册表） |
 | GET | `/dsh-market/sources` | 技能来源 |
 | GET | `/dsh-market/skills?scope=&root=` | 某作用域下已装技能 + 溯源 |
-| GET | `/dsh-market/source/browse?source=` | 固定 commit 下浏览（单次 trees 请求） |
-| GET | `/dsh-market/source/resolve?source=` | 解析默认分支 HEAD commit |
-| POST | `/dsh-market/skills/install` | 安装（需 `confirm: true`） |
+| GET | `/dsh-market/source/browse?source=` 或 `?repo=` | 固定 commit 下浏览（单次 trees 请求） |
+| GET | `/dsh-market/source/resolve?source=` 或 `?repo=` | 解析默认分支 HEAD commit |
+| POST | `/dsh-market/skills/install` | 安装（需 `confirm: true`；`source` 或 `repo` 二选一，可带 `path`） |
 | POST | `/dsh-market/skills/save` | 新建/更新自定义技能 |
 | POST | `/dsh-market/skills/remove` | 删除（需 `confirm: true`） |
 
 - 只用 Node 内置模块（profile 插件解析不到 harness 包），子进程一律 argv、**不经 shell**。
-- 自定义源只接受 `owner/repo` 形式；技能名必须匹配 `[a-z0-9][a-z0-9._-]{0,63}`，
-  写入前再校验落在技能目录内（防目录穿越）。
+- 来源标识只接受 `owner/repo` 形式；技能名必须匹配 `[a-z0-9][a-z0-9._-]{0,63}`，
+  写入前再校验落在技能目录内（防目录穿越）。远程数据一律白名单字段后再回给页面。
 - 请求体必须是 `application/json`，上限 256 KiB。
 - 装源文件走 `raw.githubusercontent.com`（不计 API 配额），列目录用一次 git trees 请求，
-  避免 GitHub 未认证 60 次/小时的限流。
+  避免 GitHub 未认证 60 次/小时的限流；目录搜索走 search 配额并带 6 小时缓存。
 
 ## 卸载
 
