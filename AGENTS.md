@@ -106,6 +106,23 @@ Dependabot 对 harness 的 ignore 不作用于 security updates：若收到
   报 TS2882（PR #1 事件根因）。
 - 升级后必跑：`pnpm check && pnpm check:scripts && pnpm build`。
 
+## 内置外部 CLI 技能包（飞书 / Lark）
+
+`lark-cli`（官方 [larksuite/cli](https://github.com/larksuite/cli)，npm 包
+`@larksuite/cli`，MIT）把 28 个 `lark-*` Agent Skill 内嵌在二进制里，通过
+`lark-cli skills list|read` 暴露。本仓库把这一包 vendored 到项目级 skill 根
+`.agents/skills/`，DSH 会话即自动获得飞书能力（文档/表格/Base/IM/日历/邮件…）。
+
+- 版本 pin 在 `scripts/lib/feishu-cli.ts`（`feishuCli.version` + `skillCount`），
+  与 vendored 字节必须一致；CLI 版本不符时同步脚本直接失败，绝不静默换包。
+- 物化/校验：`pnpm skills:feishu`（写入）、`pnpm skills:feishu:check`（漂移检测，
+  CI 用）。`lark-cli` 需在 PATH 上；脚本本身**不联网**，内容全部来自本机二进制。
+- 升级流程：安装已复核的 CLI 版本 → 改 `feishuCli.version` / `skillCount` →
+  重跑 `pnpm skills:feishu` → review diff 再提交。**不要手改** vendored 文件
+  （下次同步会覆盖）；归属与许可见 `.agents/skills/lark-cli-skills.SOURCE.md`。
+- `--target user` 可改写到 `$DSH_AGENTS_HOME/skills`（默认 `~/.agents/skills`），
+  让非本仓库工作区的会话也能用；仓库内 vendored 仍是唯一事实源。
+
 ## 禁区清单
 
 - **不改 Harness Web UI / 上游代码**；只 pin npm 包。
@@ -129,12 +146,15 @@ Dependabot 对 harness 的 ignore 不作用于 security updates：若收到
   待确认请求槽、事件分发（冷/热启动双路径）
 - `scripts/lib/materialize.ts` — 物化器（硬链接 + 根约束）
 - `scripts/verify-bundle.ts` / `checksums.ts` — 安装包内容与哈希断言
+- `scripts/lib/feishu-cli.ts` + `scripts/sync-feishu-skills.ts` — 飞书 CLI
+  pin 与 `.agents/skills/lark-*` 的物化/漂移检测（见上文专节）
 
 ## 验证命令（改动后至少跑对应的）
 
 ```bash
 pnpm check && pnpm check:scripts          # 前端 + 脚本类型
 pnpm test:scripts && pnpm test:frontend   # 脚本 + 前端安全逻辑单测
+pnpm skills:feishu:check                  # 飞书技能包与 pin 版本无漂移
 cargo nextest run --manifest-path crates/dsh-sidecar/Cargo.toml
 cargo nextest run --manifest-path src-tauri/Cargo.toml
 cargo llvm-cov nextest --manifest-path crates/dsh-sidecar/Cargo.toml --fail-under-lines 50

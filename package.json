@@ -26,6 +26,8 @@
     "snap:build": "node scripts/build-snap.ts",
     "snap:verify": "node scripts/verify-snap.ts",
     "icons": "node scripts/gen-icon.ts && tauri icon src-tauri/icons/icon-source.png --output src-tauri/icons",
+    "skills:feishu": "node scripts/sync-feishu-skills.ts",
+    "skills:feishu:check": "node scripts/sync-feishu-skills.ts --check",
     "test:scripts": "node --test \"scripts/lib/*.test.ts\"",
     "test:frontend": "node --test \"tests/frontend/*.test.ts\"",
     "verify:command-contract": "node scripts/verify-command-contract.ts",
