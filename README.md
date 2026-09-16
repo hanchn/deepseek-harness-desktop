@@ -7,8 +7,9 @@
   <img src="docs/screenshots/controller-zh-CN.png" alt="DSH Desktop 简体中文控制器与 Harness 窗口" width="960">
 </p>
 
-| 仓库 | [web-casa/DeepSeek-Harness-Desktop](https://github.com/web-casa/DeepSeek-Harness-Desktop) |
-| 下载 | [Releases](https://github.com/web-casa/DeepSeek-Harness-Desktop/releases) |
+| 本仓库 | [hanchn/deepseek-harness-desktop](https://github.com/hanchn/deepseek-harness-desktop)（public） |
+| 可靠上游 | [web-casa/DeepSeek-Harness-Desktop](https://github.com/web-casa/DeepSeek-Harness-Desktop) |
+| 已签名安装包 | [上游 Releases](https://github.com/web-casa/DeepSeek-Harness-Desktop/releases) |
 | 官网 | [dsharness.app](https://dsharness.app) |
 | 插件市场 | [cordis.run](https://cordis.run) |
 | 文档 | [更新日志](CHANGELOG.zh-CN.md) · [English changelog](CHANGELOG.md) · [SECURITY](SECURITY.md) · [FORKING](FORKING.md) · [RELEASING](RELEASING.md) · [AGENTS](AGENTS.md) |
@@ -75,6 +76,15 @@ Desktop 控制器的可用语言：两种包内的控制器都支持简体中文
 | 🔒 **隐私默认值** | 会话遥测默认关闭；子进程环境消毒（NODE_OPTIONS/loader 注入键等） |
 | 🧰 **诊断与反馈** | 一键导出诊断 zip（尽力脱敏）、复制诊断、预填 issue 报告；用户显式开启后可为一次复现保留有界的本地 stderr/Desktop 错误证据 |
 | 🪟 **桌面体验** | 单实例、窗口状态记忆、崩溃自动恢复、macOS 关闭=隐藏；托盘按 Harness 实时状态安全开放控制器/Harness、启动/重启与停止；控制器、托盘与 macOS 菜单可跟随系统语言或手选简体中文 / English，窗口标题同步但产品名保持 DSH Desktop |
+
+## 自带 API Key（BYOK）
+
+应用不内置任何 API Key。首次启动 Harness 后，在 **设置 → Models** 中选择
+DeepSeek 或其他受支持的兼容提供商，自行填写 Base URL、模型名和 API Key。
+凭据保存在隔离的本机 `DSH_HOME` 用户配置中，不会写入本 Git 仓库。
+
+不要把真实 Key 放进 Issue、提交、截图、诊断包或构建日志；如果 Key 曾经泄露，
+请立即在对应服务商处撤销并重新生成。
 
 ## ✨ 插件生态
 

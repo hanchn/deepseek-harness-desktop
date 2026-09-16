@@ -1,5 +1,21 @@
 # DSH Desktop
 
+> This public repository is maintained at
+> [hanchn/deepseek-harness-desktop](https://github.com/hanchn/deepseek-harness-desktop)
+> and tracks the reliability-focused
+> [web-casa upstream](https://github.com/web-casa/DeepSeek-Harness-Desktop).
+
+## Bring your own API key (BYOK)
+
+The app does not bundle an API key. After Harness starts for the first time,
+open **Settings → Models**, select DeepSeek or another supported compatible
+provider, and enter your own base URL, model, and API key. Credentials stay in
+the isolated local `DSH_HOME` configuration and are never written to this Git
+repository.
+
+Never put a real key in an issue, commit, screenshot, diagnostic archive, or
+build log. Revoke and rotate it immediately if it is exposed.
+
 Packages the official DeepSeek Harness as a native Windows / macOS / Linux app, with
 the Harness **plugin ecosystem** ready to go. Not a fork: the Harness ships
 intact; the desktop layer only handles lifecycle and the security boundary.
