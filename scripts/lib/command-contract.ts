@@ -12,6 +12,7 @@ export interface CommandContractSources {
 export interface CapabilityDocument {
   identifier?: unknown;
   windows?: unknown;
+  webviews?: unknown;
   permissions?: unknown;
 }
 
@@ -289,8 +290,20 @@ function harnessProblems(source: string): string[] {
   const parsed = parseCapability(source, "Harness capability");
   const problems: string[] = [];
   if (parsed.identifier !== "harness") problems.push("Harness capability identifier must be harness");
-  if (!Array.isArray(parsed.windows) || parsed.windows.length !== 1 || parsed.windows[0] !== "harness") {
-    problems.push('Harness capability windows must equal ["harness"]');
+  // The Harness is a child WEBVIEW of the bootstrap window (see
+  // `open_harness_window`), so its capability is scoped through `webviews`.
+  // Naming a window instead would either match nothing or — the dangerous case
+  // — name the bootstrap window and hand the remote page the trusted command
+  // surface. Both are contract violations, not style.
+  if (
+    !Array.isArray(parsed.webviews) ||
+    parsed.webviews.length !== 1 ||
+    parsed.webviews[0] !== "harness"
+  ) {
+    problems.push('Harness capability webviews must equal ["harness"]');
+  }
+  if (Array.isArray(parsed.windows) && parsed.windows.length > 0) {
+    problems.push("Harness capability must not be attached to a window");
   }
   if (!Array.isArray(parsed.permissions) || parsed.permissions.length !== 0) {
     problems.push("Harness capability permissions must remain empty");

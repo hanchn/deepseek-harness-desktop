@@ -39,7 +39,10 @@ const bootstrap = JSON.stringify({
     },
   ],
 });
-const harness = JSON.stringify({ identifier: "harness", windows: ["harness"], permissions: [] });
+// The Harness is a child webview of the bootstrap window, so its capability is
+// scoped by `webviews`; the bootstrap capability below is window-scoped because
+// bootstrap really is the window.
+const harness = JSON.stringify({ identifier: "harness", webviews: ["harness"], permissions: [] });
 
 test("balanced Rust extraction tolerates comments and nested delimiters", () => {
   assert.match(rustDelimitedBody(main, "tauri::generate_handler!"), /commands::get_status/);
@@ -79,7 +82,8 @@ test("aligned command contract has no problems", () => {
 test("drift and Harness privilege growth fail with actionable differences", () => {
   const unsafeHarness = JSON.stringify({
     identifier: "harness",
-    windows: ["harness", "*"],
+    webviews: ["harness", "*"],
+    windows: ["bootstrap"],
     permissions: ["core:default"],
   });
   const problems = commandContractProblems({
@@ -92,7 +96,8 @@ test("drift and Harness privilege growth fail with actionable differences", () =
     "build.rs AppManifest missing: export_diagnostics",
     "bootstrap capability missing: export_diagnostics",
     "bootstrap capability extra: quit_app",
-    'Harness capability windows must equal ["harness"]',
+    'Harness capability webviews must equal ["harness"]',
+    "Harness capability must not be attached to a window",
     "Harness capability permissions must remain empty",
   ]);
 });

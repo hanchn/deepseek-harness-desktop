@@ -9,7 +9,12 @@ const harnessSource = readFileSync(join(repoRoot, "src-tauri/src/harness/mod.rs"
 
 test("Desktop profile recovery calls the reviewed upstream public fallback healer", () => {
   assert.match(source, /import \{ healProfilesModuleFallback \} from "@deepseek-ai\/dsh-app-boot"/);
-  assert.match(source, /healProfilesModuleFallback\(process\.argv\[1\], process\.argv\[2\]\)/);
+  // The reviewed upstream healer takes one options object ({ installAnchor,
+  // home }) — the same shape verify-runtime.ts asserts at the smoke boundary.
+  assert.match(
+    source,
+    /healProfilesModuleFallback\(\{ installAnchor: process\.argv\[1\], home: process\.argv\[2\] \}\)/,
+  );
   assert.match(source, /script: "--input-type=module"/);
   assert.match(source, /"-e"\.to_string\(\)/);
 });
