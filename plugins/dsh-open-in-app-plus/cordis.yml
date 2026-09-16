@@ -1,0 +1,6 @@
+# dsh-open-in-app-plus — DSH bundle patch
+# Mounts the host row; the browser half rides the same package's `dsh.client`
+# declaration. See lib/index.js for the routes and lib/client.js for the button.
+- insert:
+    - id: open-in-app-plus
+      name: dsh-open-in-app-plus

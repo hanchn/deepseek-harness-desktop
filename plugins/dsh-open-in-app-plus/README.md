@@ -1,0 +1,80 @@
+# dsh-open-in-app-plus
+
+给 DSH Web UI 增加一行**自定义"打开方式"**：在会话头部、上游自带的
+"Open In..." 按钮**旁边**新增一个下拉，里面是 Trae / Qoder / Codex 桌面版等
+预设，以及你自己写在配置文件里的任意条目。
+
+上游不带这个能力，而且是官方明确延后的：
+
+> **The catalog is fixed at build time.** A deployment cannot add its own editor
+> or Git GUI from cordis.yml ... Configurable custom handlers remain deferred.
+>
+> — `@deepseek-ai/dsh-host-open-in-app` README, *Known Limitations*
+
+所以本插件不扩展上游目录，而是自带一套 host 路由 + 客户端控件。两者并存：
+上游按钮继续管它的内置目录（Finder / Cursor / VS Code / Zed …），本插件管你的。
+
+## 装了什么
+
+| 半身 | 文件 | 内容 |
+|---|---|---|
+| host | `lib/index.js` | `GET /open-in-app-plus/apps`（合并后的目录）、`POST /open-in-app-plus/open`（按 id 启动） |
+| client | `lib/client.js` | 注册进 `conversation.session.header.utilities` 的下拉控件 |
+
+## 预设（装了才出现）
+
+| id | 启动方式 |
+|---|---|
+| `trae` | `open -a Trae <工作区>` |
+| `qoder` | `open -a Qoder <工作区>` |
+| `qoderwork` | `open -a "QoderWork CN" <工作区>` |
+| `codex` | `open -a ChatGPT <工作区>` |
+
+> `codex` 指向 **ChatGPT.app**：本机没有独立的 `Codex.app`，Codex 桌面能力由
+> ChatGPT 桌面版承载。若你装了别的 Codex 壳，用下面的自定义条目覆盖它即可。
+
+## 自定义
+
+编辑 `$DSH_HOME/open-in-app.json`（macOS 桌面版为
+`~/Library/Application Support/com.yeagoo.dsh-desktop/harness/open-in-app.json`）：
+
+```json
+{
+  "apps": [
+    { "id": "vscode-cli", "label": "VS Code (CLI)", "kind": "cli", "command": "code", "args": ["{path}"] },
+    { "id": "terminal",   "label": "Terminal",      "kind": "app", "app": "Terminal" },
+    { "id": "my-editor",  "label": "My Editor",     "kind": "app", "app": "/Applications/My Editor.app" },
+    { "id": "cwd-tool",   "label": "Tool in cwd",   "kind": "cli", "command": "mytool", "args": [], "cwd": true }
+  ],
+  "launchWatchMs": 1000
+}
+```
+
+- `kind: "app"`：`open -a <app> [args]`；`app` 可以是名字（在
+  `/Applications`、`~/Applications`、`/System/Applications` 里找）或 `.app` 绝对路径。
+- `kind: "cli"`：按 `command` 在 PATH 上解析后 `spawn`，`args` 里的 `{path}`
+  会替换成工作区目录；`cwd: true` 时同时把子进程工作目录设为它。
+- 同 id 的自定义条目**覆盖**同名预设。
+- 解析不到的命令不会出现在菜单里，而是在菜单底部列为「未安装」。
+- 改完**不用重启**：每次打开菜单都会重新读这个文件。
+
+## 安全模型
+
+这里的每条都对应上游同样的约束：
+
+- 每个路由先过组合的 `connection` 信任栅栏（Host/Origin 检查 + 浏览器鉴权
+  cookie），未通过直接拒绝。
+- 浏览器只发 **id + 工作区路径**，命令一律由 host 侧从可信配置文件解析——
+  网页无法把它变成任意命令执行端点。
+- 全程 `spawn(command, argv)`，**不经 shell**。
+- 请求体必须是 `application/json`、上限 64 KiB；路径必须是存在的绝对目录。
+- 子进程 `detached` 启动，环境变量剔除 `*KEY*` / `*SECRET*` / `*TOKEN*` /
+  `*PASSWORD*` / `*CREDENTIAL*` / `*COOKIE*`，不继承 stdio。
+
+## 卸载
+
+```bash
+dsh plugin --profile web remove dsh-open-in-app-plus
+```
+
+`$DSH_HOME/open-in-app.json` 不会被删除（那是你的数据）。

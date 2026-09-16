@@ -1,0 +1,9 @@
+# dsh-ui-codex — DSH bundle patch
+# A top-level patch-line array. Declared through package.json's `dsh.bundle.patch`,
+# so `dsh plugin --profile web add <this package>` mounts the row automatically.
+# The row's `name` is the package name; the loader imports this package's main
+# entry (lib/index.js) for the host plane, and its `dsh.client` declaration
+# (lib/client.js) for the browser plane.
+- insert:
+    - id: ui-codex
+      name: dsh-ui-codex

@@ -1,0 +1,32 @@
+{
+  "name": "dsh-open-in-app-plus",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Custom 'Open in app' targets for the DeepSeek Harness Web UI: adds Trae, Qoder, Codex-desktop and user-defined launchers next to the shipped catalog.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.yml",
+    "README.md"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "cordis.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}
