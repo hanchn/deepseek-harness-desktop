@@ -110,7 +110,7 @@ fn replace_with_fallback<T, E>(
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use super::{labels, replace_with_fallback, MenuLabels, PresentationLocale};
+    use super::{labels, replace_with_fallback, PresentationLocale};
     use tauri::{
         menu::{
             AboutMetadata, Menu, PredefinedMenuItem, Submenu, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID,

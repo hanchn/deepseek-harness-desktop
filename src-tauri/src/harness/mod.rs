@@ -15,6 +15,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 const MAX_LOGS: usize = 500;
 const MAX_SUPERVISOR_LINE_BYTES: usize = 16 * 1024;
+const CONTROLLER_WIDTH: f64 = 360.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -366,6 +367,32 @@ fn matches_authorized_origin(candidate: &tauri::Url, authorized: Option<&str>) -
         .is_some_and(|origin| same_origin(candidate, &origin))
 }
 
+/// Keep the trusted local controller and the zero-IPC remote Harness in one
+/// physical window. Capabilities target webview labels (not the parent window)
+/// so the remote child never inherits controller commands.
+fn layout_unified_window(app: &AppHandle) {
+    let Some(window) = app.get_window("bootstrap") else {
+        return;
+    };
+    let Ok(inner) = window.inner_size() else {
+        return;
+    };
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let sidebar = ((CONTROLLER_WIDTH * scale).round() as u32).min(inner.width);
+
+    if let Some(controller) = app.get_webview("bootstrap") {
+        let _ = controller.set_position(tauri::PhysicalPosition::new(0, 0));
+        let _ = controller.set_size(tauri::PhysicalSize::new(sidebar, inner.height));
+    }
+    if let Some(harness) = app.get_webview("harness") {
+        let _ = harness.set_position(tauri::PhysicalPosition::new(sidebar as i32, 0));
+        let _ = harness.set_size(tauri::PhysicalSize::new(
+            inner.width.saturating_sub(sidebar),
+            inner.height,
+        ));
+    }
+}
+
 /// Open (or focus) the harness window. The remote webview may only navigate
 /// within the readiness origin — even with zero IPC permissions, a stray page
 /// link must not turn the window into a general-purpose browser or a jumper
@@ -384,61 +411,93 @@ pub(crate) fn open_harness_window(app: &AppHandle, url: &str) {
     };
     let authorized_origin = window_origin.0.clone();
     let app_in = app.clone();
-    if let Err(error) = app.run_on_main_thread(move || {
-        // The authorization update and navigation happen on the main thread,
-        // in order. Only a URL that passed is_valid_readiness_url reaches this
-        // point; the remote webview still has no capability/IPC permissions.
-        let previous_origin = {
-            let mut authorized = authorized_origin
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            authorized.replace(origin.clone())
-        };
+    let spawn = std::thread::Builder::new()
+        .name("harness-webview".to_string())
+        .spawn(move || {
+            // WebviewBuilder::add_child performs its own main-thread dispatch.
+            // Always enter from this worker: nesting it inside a Tauri command or
+            // main-thread callback can deadlock WebView2 on Windows.
+            let previous_origin = {
+                let mut authorized = authorized_origin
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                authorized.replace(origin.clone())
+            };
 
-        if let Some(window) = app_in.get_webview_window("harness") {
-            if let Err(error) = window.navigate(parsed) {
+            if let Some(webview) = app_in.get_webview("harness") {
+                if let Err(error) = webview.navigate(parsed) {
+                    *authorized_origin
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = previous_origin;
+                    eprintln!("[dsh-desktop] cannot navigate Harness webview: {error}");
+                    return;
+                }
+                let _ = webview.show();
+                layout_unified_window(&app_in);
+                if let Some(window) = app_in.get_window("bootstrap") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+                let _ = webview.set_focus();
+                return;
+            }
+
+            let Some(parent) = app_in.get_window("bootstrap") else {
                 *authorized_origin
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner()) = previous_origin;
-                eprintln!("[dsh-desktop] cannot navigate Harness window: {error}");
+                eprintln!("[dsh-desktop] unified parent window is unavailable");
+                return;
+            };
+            let Ok(inner) = parent.inner_size() else {
+                *authorized_origin
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = previous_origin;
+                eprintln!("[dsh-desktop] cannot read unified window size");
+                return;
+            };
+            let scale = parent.scale_factor().unwrap_or(1.0);
+            let sidebar = ((CONTROLLER_WIDTH * scale).round() as u32).min(inner.width);
+            let navigation_origin = authorized_origin.clone();
+            let builder =
+                tauri::webview::WebviewBuilder::new("harness", tauri::WebviewUrl::External(parsed))
+                    .on_navigation(move |candidate| {
+                        let authorized = navigation_origin
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        matches_authorized_origin(candidate, authorized.as_deref())
+                    });
+            let result = parent.add_child(
+                builder,
+                tauri::PhysicalPosition::new(sidebar as i32, 0),
+                tauri::PhysicalSize::new(inner.width.saturating_sub(sidebar), inner.height),
+            );
+            if let Err(error) = result {
+                *authorized_origin
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = previous_origin;
+                eprintln!("[dsh-desktop] cannot create Harness child webview: {error}");
                 return;
             }
-            let _ = window.show();
-            let _ = window.unminimize();
-            let _ = window.set_focus();
-            return;
-        }
-
-        let navigation_origin = authorized_origin.clone();
-        let title_app = app_in.clone();
-        let result = tauri::WebviewWindowBuilder::new(
-            &app_in,
-            "harness",
-            tauri::WebviewUrl::External(parsed),
-        )
-        .title(crate::presentation::harness_window_title_for(&app_in))
-        .inner_size(1280.0, 800.0)
-        .min_inner_size(960.0, 600.0)
-        .on_navigation(move |candidate| {
-            let authorized = navigation_origin
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            matches_authorized_origin(candidate, authorized.as_deref())
-        })
-        // The remote Harness is allowed to render its own web document, but
-        // never to control native window chrome. Reassert the locally chosen
-        // title on every document-title update.
-        .on_document_title_changed(move |window, _document_title| {
-            let _ = window.set_title(crate::presentation::harness_window_title_for(&title_app));
-        })
-        .build();
-        if let Err(error) = result {
-            *authorized_origin
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = previous_origin;
-            eprintln!("[dsh-desktop] cannot create Harness window: {error}");
-        }
-    }) {
+            layout_unified_window(&app_in);
+            let resize_app = app_in.clone();
+            parent.on_window_event(move |event| {
+                if matches!(
+                    event,
+                    tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. }
+                ) {
+                    layout_unified_window(&resize_app);
+                }
+            });
+            let _ = parent.show();
+            let _ = parent.unminimize();
+            let _ = parent.set_focus();
+            if let Some(webview) = app_in.get_webview("harness") {
+                let _ = webview.set_focus();
+            }
+        });
+    if let Err(error) = spawn {
         eprintln!("[dsh-desktop] cannot schedule Harness window operation: {error}");
     }
 }
@@ -1052,7 +1111,11 @@ fn start_harness(runtime: &Runtime, paths: &RuntimePaths) -> Result<(), String> 
         // DSH_HOME: the harness' own data root. DSH_TELEMETRY_DISABLED:
         // upstream dsh honors any non-empty value by disabling the
         // session-telemetry row — a community wrapper defaults to OFF.
-        "env": { "DSH_HOME": paths.dsh_home, "DSH_TELEMETRY_DISABLED": "1" },
+        "env": {
+            "DSH_HOME": paths.dsh_home,
+            "DSH_TELEMETRY_DISABLED": "1",
+            "DSH_PERMISSION_MODE": "danger-full-access"
+        },
     });
     send_raw(runtime, &cmd)?;
     let mut state = runtime

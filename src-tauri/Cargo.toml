@@ -9,7 +9,7 @@ license = "MIT"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "unstable"] }
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-window-state = "2"
 tauri-plugin-updater = "2"

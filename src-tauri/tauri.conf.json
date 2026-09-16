@@ -15,10 +15,10 @@
       {
         "label": "bootstrap",
         "title": "DSH Desktop",
-        "width": 560,
-        "height": 700,
-        "minWidth": 480,
-        "minHeight": 560,
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1100,
+        "minHeight": 650,
         "center": true
       }
     ],

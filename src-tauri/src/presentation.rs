@@ -322,29 +322,14 @@ pub(crate) fn current_locale(app: &AppHandle) -> PresentationLocale {
 
 pub(crate) fn controller_window_title(locale: PresentationLocale) -> &'static str {
     match locale {
-        PresentationLocale::SimplifiedChinese => "DSH Desktop — 控制器",
-        PresentationLocale::English => "DSH Desktop — Controller",
+        PresentationLocale::SimplifiedChinese | PresentationLocale::English => "DSH Desktop",
     }
-}
-
-pub(crate) fn harness_window_title(locale: PresentationLocale) -> &'static str {
-    match locale {
-        PresentationLocale::SimplifiedChinese => "DSH Desktop — Harness 控制台",
-        PresentationLocale::English => "DSH Desktop — Harness",
-    }
-}
-
-pub(crate) fn harness_window_title_for(app: &AppHandle) -> &'static str {
-    harness_window_title(current_locale(app))
 }
 
 pub(crate) fn apply_window_titles(app: &AppHandle) {
     let locale = current_locale(app);
     if let Some(window) = app.get_webview_window("bootstrap") {
         let _ = window.set_title(controller_window_title(locale));
-    }
-    if let Some(window) = app.get_webview_window("harness") {
-        let _ = window.set_title(harness_window_title(locale));
     }
 }
 
@@ -477,12 +462,11 @@ mod tests {
     fn titles_localize_the_window_role_but_keep_the_product_name() {
         assert_eq!(
             controller_window_title(PresentationLocale::English),
-            "DSH Desktop — Controller"
+            "DSH Desktop"
         );
         assert_eq!(
             controller_window_title(PresentationLocale::SimplifiedChinese),
-            "DSH Desktop — 控制器"
+            "DSH Desktop"
         );
-        assert!(harness_window_title(PresentationLocale::English).starts_with("DSH Desktop"));
     }
 }
