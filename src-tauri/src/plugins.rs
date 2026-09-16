@@ -158,33 +158,145 @@ pub fn pnpm_shim_cmd(node: &str, pnpm_cjs: &str) -> String {
     format!("@echo off\nsetlocal DisableDelayedExpansion\n\"{node}\" \"{pnpm_cjs}\" %*\n")
 }
 
-/// Ensure `<dsh_home>/.desktop-tools/` holds the pnpm shims; returns the
-/// directory to prepend to PATH for the plugin child. Both shims are written
-/// on every platform: cmd.exe resolves `pnpm` via PATHEXT to `pnpm.cmd`
-/// (extensionless files are never executed there, so the unix script is
-/// inert), while the `.cmd` variant also covers git-bash on Windows.
-pub fn ensure_pnpm_shim(dsh_home: &Path, node: &Path, pnpm_cjs: &Path) -> Result<PathBuf, String> {
-    let dir = market_tools_dir(dsh_home)?;
-    let node_s = node.display().to_string();
-    let cjs_s = pnpm_cjs.display().to_string();
-    let unix = dir.join("pnpm");
-    crate::secure_fs::atomic_write(
-        &unix,
-        pnpm_shim_script(&node_s, &cjs_s).as_bytes(),
-        64 * 1024,
-    )?;
-    let win = dir.join("pnpm.cmd");
-    crate::secure_fs::atomic_write(&win, pnpm_shim_cmd(&node_s, &cjs_s).as_bytes(), 64 * 1024)?;
+/// Pure shim-text generation for the bundled `dsh` CLI (unit-tested).
+///
+/// `dsh_bin` is the CLI's `lib/bin.js`, which the shim runs through the bundled
+/// Node rather than relying on a shebang: the packaged app ships `node` as an
+/// executable beside the Harness, and the Harness child's PATH carries no Node
+/// of its own.
+pub fn dsh_shim_script(node: &str, dsh_bin: &str) -> String {
+    format!(
+        "#!/bin/sh\nexec {} {} \"$@\"\n",
+        posix_shell_quote(node),
+        posix_shell_quote(dsh_bin)
+    )
+}
+
+pub fn dsh_shim_cmd(node: &str, dsh_bin: &str) -> String {
+    let node = node.replace('%', "%%");
+    let dsh_bin = dsh_bin.replace('%', "%%");
+    format!("@echo off\nsetlocal DisableDelayedExpansion\n\"{node}\" \"{dsh_bin}\" %*\n")
+}
+
+/// Pure shim-text generation for the bundled Node itself (unit-tested).
+///
+/// The bundled pnpm is a store-backed install whose launcher re-executes `node`
+/// resolved from PATH (`[ -x "$basedir/node" ]`, then `command -v node`, then a
+/// bare `exec node`), so a PATH carrying only the pnpm shim still dies with
+/// `exec: node: not found`. Exposing the bundled Node by name is what makes
+/// `dsh plugin … add` work under the minimal launchd PATH.
+pub fn node_shim_script(node: &str) -> String {
+    format!("#!/bin/sh\nexec {} \"$@\"\n", posix_shell_quote(node))
+}
+
+pub fn node_shim_cmd(node: &str) -> String {
+    let node = node.replace('%', "%%");
+    format!("@echo off\nsetlocal DisableDelayedExpansion\n\"{node}\" %*\n")
+}
+
+/// Write one shim pair (`<name>` and `<name>.cmd`) into the Desktop-owned tools
+/// directory.
+///
+/// Both variants are written on every platform: cmd.exe resolves a bare name
+/// through PATHEXT to the `.cmd` file (an extensionless file is never executed
+/// there, so the unix script stays inert), while the `.cmd` variant also covers
+/// git-bash on Windows.
+fn write_shim_pair(dir: &Path, name: &str, unix: &str, win: &str) -> Result<(), String> {
+    let unix_path = dir.join(name);
+    crate::secure_fs::atomic_write(&unix_path, unix.as_bytes(), 64 * 1024)?;
+    crate::secure_fs::atomic_write(&dir.join(format!("{name}.cmd")), win.as_bytes(), 64 * 1024)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         // Set executable permission through a no-follow file handle, not the
         // pathname, so a concurrent leaf swap cannot redirect chmod.
-        crate::secure_fs::open_regular_read(&unix)?
+        crate::secure_fs::open_regular_read(&unix_path)?
             .set_permissions(std::fs::Permissions::from_mode(0o700))
             .map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
+
+/// Ensure `<dsh_home>/.desktop-tools/` holds the pnpm shims; returns the
+/// directory to prepend to PATH for the plugin child.
+pub fn ensure_pnpm_shim(dsh_home: &Path, node: &Path, pnpm_cjs: &Path) -> Result<PathBuf, String> {
+    let dir = market_tools_dir(dsh_home)?;
+    let node_s = node.display().to_string();
+    let cjs_s = pnpm_cjs.display().to_string();
+    write_shim_pair(
+        &dir,
+        "pnpm",
+        &pnpm_shim_script(&node_s, &cjs_s),
+        &pnpm_shim_cmd(&node_s, &cjs_s),
+    )?;
     Ok(dir)
+}
+
+/// Ensure `<dsh_home>/.desktop-tools/dsh` exposes the bundled CLI.
+pub fn ensure_dsh_shim(dsh_home: &Path, node: &Path, dsh_bin: &Path) -> Result<PathBuf, String> {
+    let dir = market_tools_dir(dsh_home)?;
+    let node_s = node.display().to_string();
+    let bin_s = dsh_bin.display().to_string();
+    write_shim_pair(
+        &dir,
+        "dsh",
+        &dsh_shim_script(&node_s, &bin_s),
+        &dsh_shim_cmd(&node_s, &bin_s),
+    )?;
+    Ok(dir)
+}
+
+/// Ensure the Desktop-owned tools directory carries every shim a Harness child
+/// is given on PATH, and return that directory.
+///
+/// Third-party plugins install by shelling out to a `dsh` executable; `dsh
+/// plugin` then resolves `pnpm` from PATH; and the bundled pnpm re-executes
+/// `node` from PATH. This shell starts the bundled Harness under the minimal
+/// launchd PATH (`/usr/bin:/bin:/usr/sbin:/sbin`), where none of the three
+/// exists — without these shims every such plugin fails with "dsh command
+/// unavailable" or "pnpm not found on PATH".
+///
+/// The directory is PREPENDED, so the bundled toolchain wins over an inherited
+/// one. That is deliberate: the app pins its runtime, `DSH_HOME` already aims
+/// `dsh plugin` at this app's data root rather than `~/.dsh`, and a mixed
+/// user/bundled toolchain is how a profile ends up half-upgraded.
+pub fn ensure_desktop_tools(
+    dsh_home: &Path,
+    node: &Path,
+    pnpm_cjs: &Path,
+    dsh_bin: &Path,
+) -> Result<PathBuf, String> {
+    let dir = ensure_pnpm_shim(dsh_home, node, pnpm_cjs)?;
+    ensure_dsh_shim(dsh_home, node, dsh_bin)?;
+    let node_s = node.display().to_string();
+    write_shim_pair(
+        &dir,
+        "node",
+        &node_shim_script(&node_s),
+        &node_shim_cmd(&node_s),
+    )?;
+    Ok(dir)
+}
+
+/// Prepend a Desktop-owned directory to PATH without parsing and rebuilding the
+/// inherited value.
+///
+/// `join_paths` validates only the app-owned segment; feeding the serialized
+/// parent PATH to it as one segment caused a reported separator error, and
+/// rebuilding can rewrite Windows quoting/empty segments.
+pub fn prepend_path(
+    dir: &Path,
+    inherited: Option<&std::ffi::OsStr>,
+) -> Result<std::ffi::OsString, std::env::JoinPathsError> {
+    let mut path = std::env::join_paths([dir.as_os_str()])?;
+    if let Some(inherited) = inherited.filter(|path| !path.is_empty()) {
+        #[cfg(windows)]
+        path.push(";");
+        #[cfg(not(windows))]
+        path.push(":");
+        path.push(inherited);
+    }
+    Ok(path)
 }
 
 // ---------------------------------------------------------------------------
@@ -1917,16 +2029,171 @@ mod tests {
             "#!/bin/sh\nexec '/tmp/a'\"'\"'b/$node' '/tmp/$(touch nope)/pnpm.cjs' \"$@\"\n"
         );
         assert_eq!(
+            dsh_shim_script("/tmp/a'b/$node", "/tmp/$(touch nope)/bin.js"),
+            "#!/bin/sh\nexec '/tmp/a'\"'\"'b/$node' '/tmp/$(touch nope)/bin.js' \"$@\"\n"
+        );
+        assert_eq!(
             pnpm_shim_cmd("C:\\100%\\node.exe", "C:\\bang!\\pnpm.cjs"),
             "@echo off\nsetlocal DisableDelayedExpansion\n\"C:\\100%%\\node.exe\" \"C:\\bang!\\pnpm.cjs\" %*\n"
         );
+        assert_eq!(
+            dsh_shim_cmd("C:\\100%\\node.exe", "C:\\bang!\\bin.js"),
+            "@echo off\nsetlocal DisableDelayedExpansion\n\"C:\\100%%\\node.exe\" \"C:\\bang!\\bin.js\" %*\n"
+        );
     }
 
-    /// End-to-end shim proof (plan I4): only runs when the runtime is staged
-    /// (smoke/dev machines) — the unit job has an empty resources/runtime
-    /// dir, so it skips there instead of failing.
     #[test]
-    fn shim_runs_bundled_pnpm_when_runtime_staged() {
+    fn dsh_shim_texts_run_the_bundled_cli_through_the_bundled_node() {
+        assert_eq!(
+            dsh_shim_script("/opt/node", "/opt/harness/node_modules/@deepseek-ai/dsh/lib/bin.js"),
+            "#!/bin/sh\nexec '/opt/node' '/opt/harness/node_modules/@deepseek-ai/dsh/lib/bin.js' \"$@\"\n"
+        );
+        assert_eq!(
+            dsh_shim_cmd("C:\\node.exe", "C:\\harness\\dsh\\lib\\bin.js"),
+            "@echo off\nsetlocal DisableDelayedExpansion\n\"C:\\node.exe\" \"C:\\harness\\dsh\\lib\\bin.js\" %*\n"
+        );
+        assert_eq!(
+            node_shim_script("/opt/node"),
+            "#!/bin/sh\nexec '/opt/node' \"$@\"\n"
+        );
+        assert_eq!(
+            node_shim_cmd("C:\\100%\\node.exe"),
+            "@echo off\nsetlocal DisableDelayedExpansion\n\"C:\\100%%\\node.exe\" %*\n"
+        );
+    }
+
+    /// The desktop tools directory is what the Harness child gets on PATH, so
+    /// it must end up holding BOTH commands a plugin install shells out to.
+    #[test]
+    fn ensure_desktop_tools_writes_every_shim_the_child_needs() {
+        let home = std::env::temp_dir().join(format!(
+            "dsd-tools-test-{}",
+            crate::secure_fs::random_suffix().unwrap()
+        ));
+        std::fs::create_dir_all(&home).unwrap();
+        let dir = ensure_desktop_tools(
+            &home,
+            std::path::Path::new("/opt/node"),
+            std::path::Path::new("/opt/pnpm.cjs"),
+            std::path::Path::new("/opt/bin.js"),
+        )
+        .expect("tools write");
+        assert_eq!(dir, home.join(".desktop-tools"));
+        for name in ["pnpm", "pnpm.cmd", "dsh", "dsh.cmd", "node", "node.cmd"] {
+            assert!(dir.join(name).is_file(), "{name} was not written");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for name in ["pnpm", "dsh", "node"] {
+                let mode = std::fs::metadata(dir.join(name))
+                    .unwrap()
+                    .permissions()
+                    .mode();
+                assert_eq!(
+                    mode & 0o777,
+                    0o700,
+                    "{name} is not executable-for-owner-only"
+                );
+            }
+        }
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn prepend_path_puts_the_owned_dir_first_without_rebuilding_the_parent() {
+        let parent = std::env::join_paths([
+            std::path::Path::new("parent-one"),
+            std::path::Path::new("parent-two"),
+        ])
+        .unwrap();
+        let actual = prepend_path(std::path::Path::new("desktop-tools"), Some(&parent)).unwrap();
+        assert_eq!(
+            std::env::split_paths(&actual).collect::<Vec<_>>(),
+            vec![
+                std::path::PathBuf::from("desktop-tools"),
+                std::path::PathBuf::from("parent-one"),
+                std::path::PathBuf::from("parent-two"),
+            ]
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn prepend_path_preserves_empty_parent_segments_verbatim() {
+        let inherited = std::ffi::OsStr::new("parent-one::parent-two:");
+        let actual = prepend_path(std::path::Path::new("desktop-tools"), Some(inherited)).unwrap();
+        assert_eq!(actual, "desktop-tools:parent-one::parent-two:");
+    }
+
+    #[test]
+    fn prepend_path_without_a_parent_keeps_the_owned_dir() {
+        let actual = prepend_path(std::path::Path::new("desktop-tools"), None).unwrap();
+        assert_eq!(
+            std::env::split_paths(&actual).collect::<Vec<_>>(),
+            vec![std::path::PathBuf::from("desktop-tools")]
+        );
+    }
+
+    /// End-to-end proof that the `dsh` shim reaches the bundled CLI: a plugin
+    /// market install is exactly `dsh plugin --profile web add <spec>`, so a
+    /// shim that cannot answer `--version` breaks every such plugin.
+    #[test]
+    fn dsh_shim_runs_the_bundled_cli_when_runtime_staged() {
+        let runtime = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/runtime");
+        let node = runtime.join(format!("node{}", if cfg!(windows) { ".exe" } else { "" }));
+        let dsh_bin = runtime
+            .join("harness")
+            .join("node_modules")
+            .join("@deepseek-ai")
+            .join("dsh")
+            .join("lib")
+            .join("bin.js");
+        if !node.is_file() || !dsh_bin.is_file() {
+            eprintln!("skipping: staged runtime not present (node or bundled dsh missing)");
+            return;
+        }
+        let home = std::env::temp_dir().join(format!(
+            "dsd-dsh-shim-test-{}",
+            crate::secure_fs::random_suffix().unwrap()
+        ));
+        std::fs::create_dir_all(&home).unwrap();
+        let dir = ensure_dsh_shim(&home, &node, &dsh_bin).expect("shim write");
+        let shim = if cfg!(windows) {
+            dir.join("dsh.cmd")
+        } else {
+            dir.join("dsh")
+        };
+        let output = std::process::Command::new(&shim)
+            .arg("--version")
+            .output()
+            .expect("shim exec");
+        assert!(
+            output.status.success(),
+            "shim exited {:?}\nstderr: {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains('.'),
+            "expected a version on stdout, got {:?}",
+            String::from_utf8_lossy(&output.stdout),
+        );
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    /// Two end-to-end proofs; both only run when the runtime is staged
+    /// (smoke/dev machines) — the unit job has an empty resources/runtime
+    /// dir, so they skip there instead of failing.
+    ///
+    /// End-to-end proof of the packaged-app case: the Harness child gets the
+    /// Desktop tools directory on the minimal launchd PATH, where no `node`,
+    /// `pnpm`, or `dsh` exists. The bundled pnpm is a store-backed install whose
+    /// launcher re-executes `node` from PATH, so this only passes when the tools
+    /// directory exposes all three — which is exactly what a plugin install
+    /// needs (`dsh plugin … add` → `pnpm` → `node`).
+    #[test]
+    fn desktop_tools_run_bundled_pnpm_with_no_inherited_toolchain() {
         let runtime = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/runtime");
         let node = runtime.join(format!("node{}", if cfg!(windows) { ".exe" } else { "" }));
         let pnpm_cjs = runtime
@@ -1935,32 +2202,50 @@ mod tests {
             .join("pnpm")
             .join("bin")
             .join("pnpm.cjs");
-        if !node.is_file() || !pnpm_cjs.is_file() {
-            eprintln!("skipping: staged runtime not present (node or bundled pnpm missing)");
+        let dsh_bin = runtime
+            .join("harness")
+            .join("node_modules")
+            .join("@deepseek-ai")
+            .join("dsh")
+            .join("lib")
+            .join("bin.js");
+        if !node.is_file() || !pnpm_cjs.is_file() || !dsh_bin.is_file() {
+            eprintln!("skipping: staged runtime not present (node, pnpm, or dsh missing)");
             return;
         }
-        let home = std::env::temp_dir().join(format!("dsd-shim-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&home);
+        let home = std::env::temp_dir().join(format!(
+            "dsd-tools-e2e-{}",
+            crate::secure_fs::random_suffix().unwrap()
+        ));
         std::fs::create_dir_all(&home).unwrap();
-        let dir = ensure_pnpm_shim(&home, &node, &pnpm_cjs).expect("shim write");
-        let shim = if cfg!(windows) {
+        let dir = ensure_desktop_tools(&home, &node, &pnpm_cjs, &dsh_bin).expect("tools write");
+        let pnpm = if cfg!(windows) {
             dir.join("pnpm.cmd")
         } else {
             dir.join("pnpm")
         };
-        let output = std::process::Command::new(&shim)
+        // Mirrors the packaged app exactly: the tools directory first, then the
+        // launchd PATH. Those system directories carry no node/pnpm/dsh, so the
+        // bundled CLI can only work because the tools directory supplies them —
+        // while `sed`, which the store-backed pnpm launcher calls, still resolves.
+        #[cfg(windows)]
+        let minimal = format!("{};C:\\Windows\\System32;C:\\Windows", dir.display());
+        #[cfg(not(windows))]
+        let minimal = format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", dir.display());
+        let output = std::process::Command::new(&pnpm)
             .arg("--version")
+            .env("PATH", &minimal)
             .output()
-            .expect("shim exec");
+            .expect("pnpm shim exec");
         assert!(
             output.status.success(),
-            "shim exited {:?}\nstdout: {}\nstderr: {}",
+            "pnpm exited {:?} with PATH={minimal}\nstdout: {}\nstderr: {}",
             output.status.code(),
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr),
         );
         assert!(!String::from_utf8_lossy(&output.stdout).trim().is_empty());
-        let _ = std::fs::remove_dir_all(&home);
+        std::fs::remove_dir_all(home).unwrap();
     }
 
     #[cfg(unix)]

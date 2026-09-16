@@ -1171,6 +1171,23 @@ fn start_harness(runtime: &Runtime, paths: &RuntimePaths) -> Result<(), String> 
         .join("dsh")
         .join("lib")
         .join("bin.js");
+    let pnpm_cjs = paths
+        .harness_dir
+        .join("node_modules")
+        .join("pnpm")
+        .join("bin")
+        .join("pnpm.cjs");
+    // Third-party plugins install by shelling out to a `dsh` executable, and
+    // `dsh plugin` then resolves `pnpm` from PATH, which in turn re-executes
+    // `node` from PATH. This process may have been started by launchd with the
+    // minimal `/usr/bin:/bin:/usr/sbin:/sbin`, where none of the three exists,
+    // so hand the Harness a Desktop-owned directory holding all three shims.
+    // Sessions inherit this PATH, which is also what lets an agent drive the
+    // bundled CLI directly.
+    let tools_dir =
+        crate::plugins::ensure_desktop_tools(&paths.dsh_home, &paths.node, &pnpm_cjs, &dsh_bin)?;
+    let path_env = crate::plugins::prepend_path(&tools_dir, std::env::var_os("PATH").as_deref())
+        .map_err(|error| format!("cannot build the Harness PATH: {error}"))?;
     let cmd = serde_json::json!({
         "id": CMD_ID_START,
         "command": "start",
@@ -1181,10 +1198,13 @@ fn start_harness(runtime: &Runtime, paths: &RuntimePaths) -> Result<(), String> 
         // DSH_HOME: the harness' own data root. DSH_TELEMETRY_DISABLED:
         // upstream dsh honors any non-empty value by disabling the
         // session-telemetry row — a community wrapper defaults to OFF.
+        // PATH: the Desktop-owned tool directory first, then the inherited
+        // value appended verbatim (see `plugins::prepend_path`).
         "env": {
             "DSH_HOME": paths.dsh_home,
             "DSH_TELEMETRY_DISABLED": "1",
-            "DSH_PERMISSION_MODE": "danger-full-access"
+            "DSH_PERMISSION_MODE": "danger-full-access",
+            "PATH": path_env.to_string_lossy()
         },
     });
     send_raw(runtime, &cmd)?;

@@ -18,7 +18,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import {
   repoRoot,
   readManifest,
@@ -307,7 +307,14 @@ async function main(): Promise<void> {
     cwd: nodeLaunchPath(harnessDir),
     // Keep this env in lockstep with src-tauri/src/harness/mod.rs
     // (start_harness): the smoke must exercise the production contract.
-    env: { DSH_HOME: nodeLaunchPath(dshHome), DSH_TELEMETRY_DISABLED: "1" },
+    // PATH mirrors the Desktop-owned tool directory the production start
+    // prepends, so a plugin that shells out to `dsh`/`pnpm` resolves the
+    // bundled CLI here exactly as it does in the app.
+    env: {
+      DSH_HOME: nodeLaunchPath(dshHome),
+      DSH_TELEMETRY_DISABLED: "1",
+      PATH: [join(dshHome, ".desktop-tools"), process.env.PATH ?? ""].join(delimiter),
+    },
   });
   info("waiting for readiness line…");
   const ready = await waitFor((e) => e.type === "ready", "ready", 180_000);

@@ -819,8 +819,8 @@ fn begin_plugin_mutation(
 mod tests {
     use super::{
         ensure_no_plugin_recovery_at, is_zip_content_type, manual_plugin_install_allowed,
-        market_pnpm_args, parse_pnpm_major, plugin_mutation_status_allowed, plugin_path_env,
-        plugin_pnpm_env, redact, remove_pnpm_args, sweep_sideload_dir, sweep_sideloads_root,
+        market_pnpm_args, parse_pnpm_major, plugin_mutation_status_allowed, plugin_pnpm_env,
+        redact, remove_pnpm_args, sweep_sideload_dir, sweep_sideloads_root,
         sweep_stale_sideloads_paths, update_support, UpdateSupport,
     };
 
@@ -1178,42 +1178,6 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    #[test]
-    fn plugin_path_prepends_shim_to_a_multi_segment_parent_path() {
-        let parent = std::env::join_paths([
-            std::path::Path::new("parent-one"),
-            std::path::Path::new("parent-two"),
-        ])
-        .unwrap();
-        let actual = plugin_path_env(std::path::Path::new("desktop-shim"), Some(&parent)).unwrap();
-        assert_eq!(
-            std::env::split_paths(&actual).collect::<Vec<_>>(),
-            vec![
-                std::path::PathBuf::from("desktop-shim"),
-                std::path::PathBuf::from("parent-one"),
-                std::path::PathBuf::from("parent-two"),
-            ]
-        );
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn plugin_path_preserves_empty_parent_segments_verbatim() {
-        let inherited = std::ffi::OsStr::new("parent-one::parent-two:");
-        let actual =
-            plugin_path_env(std::path::Path::new("desktop-shim"), Some(inherited)).unwrap();
-        assert_eq!(actual, "desktop-shim:parent-one::parent-two:");
-    }
-
-    #[test]
-    fn plugin_path_without_parent_keeps_the_owned_shim() {
-        let actual = plugin_path_env(std::path::Path::new("desktop-shim"), None).unwrap();
-        assert_eq!(
-            std::env::split_paths(&actual).collect::<Vec<_>>(),
-            vec![std::path::PathBuf::from("desktop-shim")]
-        );
-    }
-
     #[cfg(unix)]
     #[test]
     fn closed_log_stream_does_not_make_a_running_plugin_uncancellable() {
@@ -1503,25 +1467,6 @@ pub fn apply_profile_patch_cleanup(
         ensure_no_plugin_recovery_at(&paths.dsh_home)?;
         crate::profile_consistency::apply_cleanup(&paths.dsh_home, &transaction_id, &cleanup)
     })
-}
-
-/// Prepend the Desktop-owned pnpm shim without parsing and rebuilding the
-/// inherited PATH. `join_paths` validates only the app-owned segment; feeding
-/// the serialized parent value to it as one segment caused the reported
-/// separator error and rebuilding can rewrite Windows quoting/empty segments.
-fn plugin_path_env(
-    shim_dir: &std::path::Path,
-    inherited_path: Option<&std::ffi::OsStr>,
-) -> Result<std::ffi::OsString, std::env::JoinPathsError> {
-    let mut path = std::env::join_paths([shim_dir.as_os_str()])?;
-    if let Some(inherited_path) = inherited_path.filter(|path| !path.is_empty()) {
-        #[cfg(windows)]
-        path.push(";");
-        #[cfg(not(windows))]
-        path.push(":");
-        path.push(inherited_path);
-    }
-    Ok(path)
 }
 
 /// Upstream invokes pnpm through `shell: true` on Windows. Do not let an
@@ -1899,7 +1844,7 @@ fn plugin_spawn_spec(
 
     let shim_dir = crate::plugins::ensure_pnpm_shim(&paths.dsh_home, &paths.node, &pnpm_cjs)?;
     let inherited_path = std::env::var_os("PATH");
-    let path_env = plugin_path_env(&shim_dir, inherited_path.as_deref())
+    let path_env = crate::plugins::prepend_path(&shim_dir, inherited_path.as_deref())
         .map_err(|error| format!("cannot build PATH: {error}"))?;
     let store_dir =
         crate::plugins::generic_profile_store_base(&paths.dsh_home, bundled_pnpm_major(paths)?)?;
