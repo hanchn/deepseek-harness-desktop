@@ -1,0 +1,7 @@
+# dsh-usage-stats — DSH bundle patch
+# Mounts the host row; the browser half rides the same package's `dsh.client`
+# declaration. See lib/index.js for the read-only report route and
+# lib/client.js for the row under the composer.
+- insert:
+    - id: usage-stats
+      name: dsh-usage-stats
