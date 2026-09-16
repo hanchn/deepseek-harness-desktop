@@ -1,0 +1,39 @@
+# dsh-plugin-market — DSH bundle patch
+# 这是 DSH 认可的 bundle patch 文件：顶层为 patch 行数组。
+# 通过 package.json 的 `dsh.bundle.patch` 声明，`dsh plugin --profile <name> add <package>`
+# 安装后会自动挂载该行（name 为包名，loader 按包名 import）。
+# 若手动挂载：把下面的内容复制进 <DSH_HOME>/profiles/<name>/cordis.patch.yml 亦可。
+
+- insert:
+    - id: plugin-market
+      name: dsh-plugin-market
+      config:
+        catalog:
+          fallbackToSearch: true
+          # urls: ["https://dsh-plugin-market.vercel.app/registry.json"]
+
+        sources:
+          github:
+            enabled: true
+            topic: "dsh-plugin"
+          npm:
+            enabled: true
+            keyword: "dsh-plugin"
+            registry: "https://registry.npmjs.org"
+
+        cache:
+          ttl: 21600
+          autoRefresh: true
+          refreshInterval: 21600
+
+        ui:
+          defaultSort: "stars"
+          defaultView: "grid"
+          showRiskLevel: true
+
+        # 安装配置
+        install:
+          defaultProfile: "web"
+          autoUpdate: false
+          confirmBeforeInstall: true
+          # dshCommand: "npx @deepseek-ai/dsh"   # npx 运行 DSH 时取消注释；留空自动检测

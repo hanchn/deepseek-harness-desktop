@@ -1,0 +1,59 @@
+{
+  "name": "dsh-plugin-market",
+  "version": "0.3.0",
+  "description": "DSH 插件市场 — 在 DSH Web UI 内发现并一键安装社区插件，配套公开目录站",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "plugin-market",
+    "marketplace"
+  ],
+  "author": "dsh-plugin-market",
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "cordis.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  },
+  "dependencies": {
+    "sql.js": "^1.10.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-typert-protocol": "^0.1.0-rc.6"
+  },
+  "vendored": {
+    "upstream": "https://github.com/chnjames/dsh-plugin-market",
+    "upstreamVersion": "0.3.0",
+    "vendoredAt": "2026-09-16",
+    "note": "本地 fork：已安装判定改以 profile 的 package.json 为准（按来源身份匹配），新增「已安装」tab 与 plugin_market_uninstall 工具。只纳入上游构建产物 lib/，故移除 build/prepare 脚本与 devDependencies——否则 file: 安装会执行不存在的 tsc。"
+  }
+}
