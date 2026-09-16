@@ -1,21 +1,28 @@
-// Generate the app icon source PNG (1024×1024) with zero dependencies:
-// hand-rolled PNG encoder (zlib.deflateSync + CRC32).
+// Generate the app icon source PNG (1024×1024) and the tray template (32px)
+// with zero dependencies: the official brand mark is rasterized here from
+// `src-tauri/icons/dsh-mark.svg` (the DeepSeek Harness whale, vendored from
+// upstream's Web UI favicon) by a scanline filler plus a hand-rolled PNG
+// encoder (zlib.deflateSync + CRC32).
 //
-// Design: dark rounded square, DeepSeek-blue ring + core disc, one satellite
-// dot — a minimal "harness orbit" mark. Run `pnpm icons` afterwards to derive
-// the full platform set (ico/icns/pngs) via `tauri icon`.
+// Design: the official mark in white on a dark rounded square, so the app icon
+// is the product's own identity rather than a house-drawn substitute.
+// Run `pnpm icons` afterwards to derive the full platform set (ico/icns/pngs)
+// via `tauri icon`.
 
 import { deflateSync } from "node:zlib";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+
+const ICONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "src-tauri", "icons");
+/** The vendored official mark; the single source of truth for both outputs. */
+const MARK_SVG = join(ICONS_DIR, "dsh-mark.svg");
 
 const SIZE = 1024;
 const RADIUS = 220; // rounded corner radius
 
 const BG: [number, number, number] = [0x0d, 0x11, 0x17];
-const BLUE: [number, number, number] = [0x4d, 0x6b, 0xfe];
-const WHITE: [number, number, number] = [0xe8, 0xeb, 0xf2];
+const MARK: [number, number, number] = [0xff, 0xff, 0xff];
 
 // --- minimal PNG encoder -------------------------------------------------
 const CRC_TABLE = (() => {
@@ -62,102 +69,203 @@ function encodePng(rgba: Buffer, size: number): Buffer {
   ]);
 }
 
+// --- brand mark: parse, flatten, scale ------------------------------------
+type Point = readonly [number, number];
+
+/** Segments per cubic; the mark's curves are gentle and 1024px is the target. */
+const CURVE_STEPS = 24;
+
+/** Parse the subset of SVG path syntax the vendored mark uses: M / C / Z. */
+function parseMark(d: string): Point[][] {
+  const tokens = d.match(/[MCZ]|-?\d*\.?\d+(?:[eE][-+]?\d+)?/g) ?? [];
+  const subpaths: Point[][] = [];
+  let current: Point[] = [];
+  let x = 0;
+  let y = 0;
+  let i = 0;
+  const next = (): number => Number(tokens[i++]);
+
+  const flush = (): void => {
+    if (current.length > 2) subpaths.push(current);
+    current = [];
+  };
+
+  while (i < tokens.length) {
+    const cmd = tokens[i++];
+    if (cmd === "M") {
+      flush();
+      x = next();
+      y = next();
+      current.push([x, y]);
+    } else if (cmd === "C") {
+      const x1 = next();
+      const y1 = next();
+      const x2 = next();
+      const y2 = next();
+      const x3 = next();
+      const y3 = next();
+      for (let step = 1; step <= CURVE_STEPS; step++) {
+        const t = step / CURVE_STEPS;
+        const u = 1 - t;
+        const a = u * u * u;
+        const b = 3 * u * u * t;
+        const c = 3 * u * t * t;
+        const e = t * t * t;
+        current.push([
+          a * x + b * x1 + c * x2 + e * x3,
+          a * y + b * y1 + c * y2 + e * y3,
+        ]);
+      }
+      x = x3;
+      y = y3;
+    } else if (cmd === "Z") {
+      flush();
+    }
+  }
+  flush();
+  return subpaths;
+}
+
+/** Read the vendored SVG and flatten its one path into closed polygons. */
+function loadMarkPolygons(): Point[][] {
+  const svg = readFileSync(MARK_SVG, "utf8");
+  const match = /<path\b[^>]*\sd="([^"]+)"/.exec(svg);
+  if (match === null) throw new Error(`no <path d="..."> found in ${MARK_SVG}`);
+  return parseMark(match[1]);
+}
+
+/** Scale + centre polygons so the glyph's longest side spans `fraction`. */
+function fitPolygons(polygons: Point[][], size: number, fraction: number): Point[][] {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const polygon of polygons) {
+    for (const [px, py] of polygon) {
+      if (px < minX) minX = px;
+      if (py < minY) minY = py;
+      if (px > maxX) maxX = px;
+      if (py > maxY) maxY = py;
+    }
+  }
+  const span = Math.max(maxX - minX, maxY - minY);
+  const scale = (size * fraction) / span;
+  const offsetX = (size - (maxX - minX) * scale) / 2 - minX * scale;
+  const offsetY = (size - (maxY - minY) * scale) / 2 - minY * scale;
+  return polygons.map((polygon) =>
+    polygon.map(([px, py]): Point => [px * scale + offsetX, py * scale + offsetY]),
+  );
+}
+
+// --- scanline nonzero fill with analytic x coverage -----------------------
+/**
+ * Coverage per pixel (0..1) of the nonzero-filled polygons, anti-aliased in
+ * both axes: `SUB_ROWS` analytic scanlines per pixel row, and exact x overlap
+ * inside each row.
+ */
+function fillCoverage(polygons: Point[][], size: number, subRows: number): Float32Array {
+  const coverage = new Float32Array(size * size);
+  const crossings: { x: number; dir: number }[] = [];
+
+  const addSpan = (row: number, from: number, to: number): void => {
+    const start = Math.max(0, Math.floor(from));
+    const end = Math.min(size - 1, Math.ceil(to) - 1);
+    const base = row * size;
+    for (let px = start; px <= end; px++) {
+      const overlap = Math.min(to, px + 1) - Math.max(from, px);
+      if (overlap > 0) coverage[base + px] += overlap / subRows;
+    }
+  };
+
+  for (let py = 0; py < size; py++) {
+    for (let sub = 0; sub < subRows; sub++) {
+      const y = py + (sub + 0.5) / subRows;
+      crossings.length = 0;
+      for (const polygon of polygons) {
+        for (let i = 0; i < polygon.length; i++) {
+          const [ax, ay] = polygon[i];
+          const [bx, by] = polygon[(i + 1) % polygon.length];
+          if ((ay <= y && by > y) || (by <= y && ay > y)) {
+            const t = (y - ay) / (by - ay);
+            crossings.push({ x: ax + t * (bx - ax), dir: by > ay ? 1 : -1 });
+          }
+        }
+      }
+      if (crossings.length < 2) continue;
+      crossings.sort((a, b) => a.x - b.x);
+      let winding = 0;
+      let spanStart = 0;
+      for (const crossing of crossings) {
+        const before = winding;
+        winding += crossing.dir;
+        if (before === 0 && winding !== 0) spanStart = crossing.x;
+        else if (before !== 0 && winding === 0 && crossing.x > spanStart) addSpan(py, spanStart, crossing.x);
+      }
+    }
+  }
+  return coverage;
+}
+
 // --- drawing --------------------------------------------------------------
-function inRoundedRect(x: number, y: number): boolean {
-  const cx = Math.min(Math.max(x, RADIUS), SIZE - 1 - RADIUS);
-  const cy = Math.min(Math.max(y, RADIUS), SIZE - 1 - RADIUS);
+function inRoundedRect(x: number, y: number, size: number, radius: number): boolean {
+  const cx = Math.min(Math.max(x, radius), size - 1 - radius);
+  const cy = Math.min(Math.max(y, radius), size - 1 - radius);
   const dx = x - cx;
   const dy = y - cy;
-  return dx * dx + dy * dy <= RADIUS * RADIUS;
+  return dx * dx + dy * dy <= radius * radius;
 }
 
-const cx0 = SIZE / 2 - 0.5;
-const cy0 = SIZE / 2 - 0.5;
-const RING_OUT = 300;
-const RING_IN = 236;
-const CORE = 104;
-const SAT_R = 36;
-const SAT_A = Math.PI / 4; // 45°
-const SAT_X = cx0 + 268 * Math.cos(SAT_A);
-const SAT_Y = cy0 - 268 * Math.sin(SAT_A);
+const polygons = loadMarkPolygons();
 
-function colorAt(px: number, py: number): [number, number, number, number] {
-  if (!inRoundedRect(px, py)) return [0, 0, 0, 0];
-  const d = Math.hypot(px - cx0, py - cy0);
-  if (Math.hypot(px - SAT_X, py - SAT_Y) <= SAT_R) return [...WHITE, 255];
-  if (d <= CORE) return [...BLUE, 255];
-  if (d >= RING_IN && d <= RING_OUT) return [...BLUE, 255];
-  return [...BG, 255];
-}
-
+// ---------------------------------------------------------------------------
+// App icon: official mark in white on the dark rounded square.
+// ---------------------------------------------------------------------------
+const fitted = fitPolygons(polygons, SIZE, 0.62);
+const coverage = fillCoverage(fitted, SIZE, 4);
 const rgba = Buffer.alloc(SIZE * SIZE * 4);
 for (let y = 0; y < SIZE; y++) {
   for (let x = 0; x < SIZE; x++) {
-    // 2×2 supersampling for smooth edges.
-    let r = 0;
-    let g = 0;
-    let b = 0;
-    let a = 0;
+    // 2×2 supersampling for the rounded-square alpha.
+    let hits = 0;
     for (const [ox, oy] of [
       [0.25, 0.25],
       [0.75, 0.25],
       [0.25, 0.75],
       [0.75, 0.75],
     ]) {
-      const [cr, cg, cb, ca] = colorAt(x + ox, y + oy);
-      r += cr;
-      g += cg;
-      b += cb;
-      a += ca;
+      if (inRoundedRect(x + ox, y + oy, SIZE, RADIUS)) hits++;
     }
     const i = (y * SIZE + x) * 4;
-    rgba[i] = Math.round(r / 4);
-    rgba[i + 1] = Math.round(g / 4);
-    rgba[i + 2] = Math.round(b / 4);
-    rgba[i + 3] = Math.round(a / 4);
+    const glyph = Math.min(1, coverage[y * SIZE + x]);
+    rgba[i] = Math.round(BG[0] * (1 - glyph) + MARK[0] * glyph);
+    rgba[i + 1] = Math.round(BG[1] * (1 - glyph) + MARK[1] * glyph);
+    rgba[i + 2] = Math.round(BG[2] * (1 - glyph) + MARK[2] * glyph);
+    rgba[i + 3] = Math.round((hits / 4) * 255);
   }
 }
 
-const outPath = join(dirname(fileURLToPath(import.meta.url)), "..", "src-tauri", "icons", "icon-source.png");
-mkdirSync(dirname(outPath), { recursive: true });
+const outPath = join(ICONS_DIR, "icon-source.png");
+mkdirSync(ICONS_DIR, { recursive: true });
 writeFileSync(outPath, encodePng(rgba, SIZE));
 console.log(`✓ icon source written → ${outPath}`);
 
 // ---------------------------------------------------------------------------
-// Tray template icon (32px, monochrome black ring, transparent background).
+// Tray template icon (32px, monochrome black mark, transparent background).
 // macOS uses template images (auto light/dark); Windows/Linux tint per theme.
 // ---------------------------------------------------------------------------
 function genTrayTemplate(): void {
   const S = 32;
-  const cx = S / 2 - 0.5;
-  const cy = S / 2 - 0.5;
-  const R_OUT = 13;
-  const R_IN = 10;
-  const CORE = 4.5;
-  const rgba = Buffer.alloc(S * S * 4);
-  for (let y = 0; y < S; y++) {
-    for (let x = 0; x < S; x++) {
-      const i = (y * S + x) * 4;
-      // 2×2 supersample for smooth edges.
-      let a = 0;
-      for (const [ox, oy] of [
-        [0.25, 0.25],
-        [0.75, 0.25],
-        [0.25, 0.75],
-        [0.75, 0.75],
-      ]) {
-        const dd = Math.hypot(x + ox - cx, y + oy - cy);
-        if (dd <= CORE || (dd >= R_IN && dd <= R_OUT)) a += 255;
-      }
-      rgba[i] = 0;
-      rgba[i + 1] = 0;
-      rgba[i + 2] = 0;
-      rgba[i + 3] = Math.round(a / 4);
-    }
+  const trayCoverage = fillCoverage(fitPolygons(polygons, S, 0.86), S, 4);
+  const tray = Buffer.alloc(S * S * 4);
+  for (let i = 0; i < S * S; i++) {
+    tray[i * 4] = 0;
+    tray[i * 4 + 1] = 0;
+    tray[i * 4 + 2] = 0;
+    tray[i * 4 + 3] = Math.round(Math.min(1, trayCoverage[i]) * 255);
   }
-  const outPath = join(dirname(fileURLToPath(import.meta.url)), "..", "src-tauri", "icons", "tray-template.png");
-  writeFileSync(outPath, encodePng(rgba, S));
-  console.log(`✓ tray template icon written → ${outPath}`);
+  const trayPath = join(ICONS_DIR, "tray-template.png");
+  writeFileSync(trayPath, encodePng(tray, S));
+  console.log(`✓ tray template icon written → ${trayPath}`);
 }
 
 genTrayTemplate();
