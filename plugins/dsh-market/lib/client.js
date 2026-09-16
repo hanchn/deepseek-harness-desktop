@@ -63,6 +63,14 @@ window.__ModuleLoader__.load({
       "skills.catalogFailed": "读取技能目录失败：{detail}",
       "skills.catalogEmpty": "目录里还没有条目，点「刷新目录」重试。",
       "skills.filter": "筛选仓库名…",
+      "skills.installedOnly": "只看已安装",
+      "skills.installedBadge": "已装 {count}",
+      "skills.manualBadge": "手动指定",
+      "skills.repoLabel": "或直接输入仓库",
+      "skills.repoPlaceholder": "owner/repo，也可粘贴 GitHub 链接",
+      "skills.repoGo": "浏览",
+      "skills.repoBad": "仓库名要写成 owner/repo",
+      "skills.installedHint": "这个位置已装 {count} 个技能，其中 {sourced} 个带固定来源记录；没来源记录的（如手工装的）请在「自定义 Skill」查看。",
       "skills.sourceSection": "或按固定来源浏览",
       "skills.truncated": "这个仓库的文件树被 GitHub 截断，列表可能不完整；安装会被拒绝。",
       "skills.source": "来源",
@@ -146,6 +154,14 @@ window.__ModuleLoader__.load({
       "skills.catalogFailed": "Could not read the skill catalog: {detail}",
       "skills.catalogEmpty": "The catalog has no entries yet — try refreshing.",
       "skills.filter": "Filter repositories…",
+      "skills.installedOnly": "Installed only",
+      "skills.installedBadge": "Installed {count}",
+      "skills.manualBadge": "Entered by hand",
+      "skills.repoLabel": "Or name a repository",
+      "skills.repoPlaceholder": "owner/repo, or paste a GitHub link",
+      "skills.repoGo": "Browse",
+      "skills.repoBad": "A repository name looks like owner/repo",
+      "skills.installedHint": "This scope has {count} installed skills; {sourced} of them record a pinned source. Skills without a recorded source (installed by hand) live in the “Custom skills” tab.",
       "skills.sourceSection": "Or browse a fixed source",
       "skills.truncated": "GitHub truncated this repository's file tree, so the list may be incomplete; installing from it is refused.",
       "skills.source": "Source",
@@ -257,6 +273,12 @@ window.__ModuleLoader__.load({
 .mk-caret { font-size: 10px; color: var(--dsw-alias-label-tertiary, #8c8c8c); }
 .mk-details { display: flex; flex-direction: column; gap: 8px; }
 .mk-details > summary { cursor: pointer; }
+.mk-check {
+  display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
+  font-size: 12px; color: var(--dsw-alias-label-secondary, #a6a6a6);
+}
+.mk-check input { margin: 0; accent-color: var(--dsw-alias-brand-primary, #f5f5f5); }
+.mk-input.mk-flex { flex: 1; width: auto; min-width: 220px; }
 `;
 
     function injectStyles() {
@@ -488,6 +510,13 @@ window.__ModuleLoader__.load({
       const [sourceId, setSourceId] = useState("");
       const [catalog, setCatalog] = useState({ status: "loading", items: [], fetchedAtMs: null, cache: null, failures: [] });
       const [filter, setFilter] = useState("");
+      /** Installed inventory for the current scope: total + per-source-repo counts. */
+      const [installed, setInstalled] = useState(null);
+      /** Repositories typed by hand this session, kept so they can be re-opened. */
+      const [extraRepos, setExtraRepos] = useState([]);
+      const [manual, setManual] = useState("");
+      const [manualError, setManualError] = useState(null);
+      const [installedOnly, setInstalledOnly] = useState(false);
       /** Where the visible listing came from: a catalog repo or a fixed source. */
       const [target, setTarget] = useState(null);
       const [listing, setListing] = useState(null);
@@ -531,6 +560,62 @@ window.__ModuleLoader__.load({
           .catch((failure) => setSources({ sources: [], configError: String(failure?.message ?? failure) }));
       }, []);
 
+      // The installed inventory answers one question the catalog cannot: which
+      // repositories this scope already has skills from. Only skills installed
+      // through this page carry a source marker, so hand-placed skills (the
+      // repository's own vendored ones) count toward the total but map to no
+      // repository — the hint below sends those readers to the custom tab.
+      useEffect(() => {
+        let live = true;
+        setInstalled(null);
+        // A scope switch invalidates the filter's premise: the checkbox is not
+        // rendered while nothing is installed, so leaving it on would strand
+        // the list on an empty result with no way back.
+        setInstalledOnly(false);
+        api
+          .skills(scope, root)
+          .then((data) => {
+            if (!live) return;
+            const byRepo = new Map();
+            let sourced = 0;
+            const skills = Array.isArray(data?.skills) ? data.skills : [];
+            for (const skill of skills) {
+              const repo = skill?.source?.repo;
+              if (typeof repo !== "string" || repo === "") continue;
+              sourced += 1;
+              byRepo.set(repo, (byRepo.get(repo) ?? 0) + 1);
+            }
+            setInstalled({ total: skills.length, sourced, byRepo, dir: data?.dir ?? "" });
+          })
+          .catch(() => {
+            if (live) setInstalled({ total: 0, sourced: 0, byRepo: new Map(), dir: "" });
+          });
+        return () => {
+          live = false;
+        };
+      }, [scope, root]);
+
+      /** Accept `owner/name`, a GitHub URL, or a URL with a trailing `.git`. */
+      const normalizeRepo = (value) =>
+        String(value ?? "")
+          .trim()
+          .replace(/^https?:\/\/(?:www\.)?github\.com\//i, "")
+          .replace(/\.git$/i, "")
+          .replace(/\/+$/, "");
+
+      /** Browse a repository that is not in the catalog, pinned the same way. */
+      const browseManual = () => {
+        const repo = normalizeRepo(manual);
+        if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+          setManualError(t("skills.repoBad"));
+          return;
+        }
+        setManualError(null);
+        setManual(repo);
+        setExtraRepos((current) => (current.includes(repo) ? current : [...current, repo]));
+        openListing({ kind: "catalog", repo });
+      };
+
       const openListing = (nextTarget) => {
         setBusy(nextTarget.kind === "catalog" ? `browse:${nextTarget.repo}` : "browse");
         setError(null);
@@ -563,13 +648,26 @@ window.__ModuleLoader__.load({
           .finally(() => setBusy(""));
       };
 
+      const installedRepos = installed?.byRepo ?? new Map();
       const needle = filter.trim().toLowerCase();
-      const items =
-        needle === ""
-          ? catalog.items
-          : catalog.items.filter((item) =>
-              `${item.repo} ${item.description ?? ""}`.toLowerCase().includes(needle),
-            );
+      // Rows the 40-entry stars catalog cannot carry stay reachable: the
+      // repositories typed by hand and the ones this scope already installed
+      // from are merged in front of it, de-duplicated by repository.
+      const byRepo = new Map();
+      for (const repo of extraRepos) {
+        byRepo.set(repo, { repo, description: null, stars: null, license: "", manual: true });
+      }
+      for (const repo of installedRepos.keys()) {
+        if (byRepo.has(repo)) continue;
+        byRepo.set(repo, { repo, description: null, stars: null, license: "", installedOnly: true });
+      }
+      for (const item of catalog.items) {
+        const prior = byRepo.get(item.repo);
+        byRepo.set(item.repo, prior?.manual === true ? { ...item, manual: true } : item);
+      }
+      const items = [...byRepo.values()]
+        .filter((item) => needle === "" || `${item.repo} ${item.description ?? ""}`.toLowerCase().includes(needle))
+        .filter((item) => !installedOnly || installedRepos.has(item.repo));
 
       return h(
         "div",
@@ -584,12 +682,31 @@ window.__ModuleLoader__.load({
           h("span", { class: "mk-label" }, t("skills.catalog")),
           catalog.items.length > 0 ? h("span", { class: "mk-badge" }, String(catalog.items.length)) : null,
           h("div", { class: "mk-spacer" }),
+          installed !== null && installed.total > 0
+            ? h(
+                "label",
+                { class: "mk-check" },
+                h("input", {
+                  type: "checkbox",
+                  checked: installedOnly,
+                  onChange: (event) => setInstalledOnly(event.target.checked),
+                }),
+                t("skills.installedOnly"),
+              )
+            : null,
           h(
             "button",
             { class: "mk-btn", disabled: busy !== "", onClick: () => loadCatalog(true) },
             busy === "catalog:refresh" ? t("common.loading") : t("skills.refreshCatalog"),
           ),
         ),
+        installed !== null && installed.total > 0
+          ? h(
+              "div",
+              { class: "mk-note" },
+              t("skills.installedHint", { count: installed.total, sourced: installed.sourced }),
+            )
+          : null,
         catalog.status === "loading" ? h("div", { class: "mk-sub" }, t("common.loading")) : null,
         catalog.status === "error" ? h("div", { class: "mk-err" }, t("skills.catalogFailed", { detail: catalog.detail })) : null,
         catalog.status === "ready" && catalog.fetchedAtMs !== null
@@ -604,10 +721,10 @@ window.__ModuleLoader__.load({
         catalog.status === "ready" && catalog.failures.length > 0
           ? h("div", { class: "mk-note" }, t("skills.catalogPartial", { detail: catalog.failures.join("; ") }))
           : null,
-        catalog.status === "ready" && catalog.items.length === 0
+        catalog.status === "ready" && byRepo.size === 0
           ? h("div", { class: "mk-sub" }, t("skills.catalogEmpty"))
           : null,
-        catalog.status === "ready" && catalog.items.length > 0
+        catalog.status === "ready" && byRepo.size > 0
           ? h("input", {
               class: "mk-input",
               value: filter,
@@ -629,11 +746,21 @@ window.__ModuleLoader__.load({
                     "div",
                     { class: "mk-card-head" },
                     h("span", { class: "mk-name" }, item.repo),
-                    h(
-                      "span",
-                      { class: "mk-badge", "data-tone": "rating", title: t("skills.ratingNote") },
-                      `★ ${formatStars(item.stars)}`,
-                    ),
+                    installedRepos.has(item.repo)
+                      ? h(
+                          "span",
+                          { class: "mk-badge", "data-tone": "ok" },
+                          t("skills.installedBadge", { count: installedRepos.get(item.repo) }),
+                        )
+                      : null,
+                    item.manual ? h("span", { class: "mk-badge" }, t("skills.manualBadge")) : null,
+                    item.stars === null || item.stars === undefined
+                      ? null
+                      : h(
+                          "span",
+                          { class: "mk-badge", "data-tone": "rating", title: t("skills.ratingNote") },
+                          `★ ${formatStars(item.stars)}`,
+                        ),
                     item.license ? h("span", { class: "mk-badge" }, item.license) : null,
                     h("div", { class: "mk-spacer" }),
                     h(
@@ -732,11 +859,35 @@ window.__ModuleLoader__.load({
           : null,
         h(
           "details",
-          { class: "mk-details" },
+          { class: "mk-details", open: true },
           h("summary", { class: "mk-note" }, t("skills.sourceSection")),
           h(
             "div",
             { class: "mk" },
+            // Any public repository can be browsed and installed at a pinned
+            // commit; the catalog is a discovery list, not an allow-list.
+            h(
+              "div",
+              { class: "mk-row" },
+              h("span", { class: "mk-label" }, t("skills.repoLabel")),
+              h("input", {
+                class: "mk-input mk-flex",
+                value: manual,
+                spellcheck: "false",
+                placeholder: t("skills.repoPlaceholder"),
+                "aria-label": t("skills.repoLabel"),
+                onChange: (event) => setManual(event.target.value),
+                onKeyDown: (event) => {
+                  if (event.key === "Enter") browseManual();
+                },
+              }),
+              h(
+                "button",
+                { class: "mk-btn", disabled: busy !== "" || manual.trim() === "", onClick: browseManual },
+                t("skills.repoGo"),
+              ),
+            ),
+            manualError ? h("div", { class: "mk-err" }, manualError) : null,
             h(
               "div",
               { class: "mk-row" },
@@ -784,7 +935,7 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = useState(null);
       const [form, setForm] = useState(null);
       const [confirming, setConfirming] = useState(null);
-      const [openGroups, setOpenGroups] = useState({ custom: true, source: true, readonly: false });
+      const [openGroups, setOpenGroups] = useState({ custom: true, source: true, readonly: true });
 
       const load = () => {
         setError(null);

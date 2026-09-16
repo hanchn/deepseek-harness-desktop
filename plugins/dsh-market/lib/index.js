@@ -378,16 +378,40 @@ function assertSkillName(value) {
   return value;
 }
 
-/** Minimal `--- name: … ---` reader; no YAML dependency. */
+/**
+ * Minimal frontmatter reader: `key: value` scalars plus the block scalars
+ * (`|`, `|-`, `>`) that skill descriptions routinely use. Without the block
+ * form a description such as `description: |` parsed as the literal `"|"`,
+ * which is what `next-1688/1688-shopkeeper` and most linkfox skills declare.
+ * The Harness remains the authority on skill discovery; this only feeds the
+ * market and custom-skill listings.
+ */
 function parseFrontmatter(text) {
   if (!text.startsWith("---")) return { fields: {}, body: text };
   const end = text.indexOf("\n---", 3);
   if (end === -1) return { fields: {}, body: text };
+  const lines = text.slice(3, end).split(/\r?\n/);
   const fields = {};
-  for (const line of text.slice(3, end).split(/\r?\n/)) {
-    const match = /^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$/.exec(line);
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = /^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$/.exec(lines[index]);
     if (match === null) continue;
-    fields[match[1]] = match[2].trim().replace(/^["']|["']$/g, "");
+    const key = match[1];
+    const raw = match[2].trim();
+    const block = /^([|>])([+-]?)$/.exec(raw);
+    if (block === null) {
+      fields[key] = raw.replace(/^["']|["']$/g, "");
+      continue;
+    }
+    const collected = [];
+    while (index + 1 < lines.length && (lines[index + 1].trim() === "" || /^\s/.test(lines[index + 1]))) {
+      index += 1;
+      collected.push(lines[index]);
+    }
+    const indents = collected.filter((line) => line.trim() !== "").map((line) => /^\s*/.exec(line)[0].length);
+    const strip = indents.length === 0 ? 0 : Math.min(...indents);
+    const parts = collected.map((line) => line.slice(strip).trimEnd());
+    while (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
+    fields[key] = block[1] === ">" ? parts.join(" ").replace(/\s+/g, " ") : parts.join("\n");
   }
   return { fields, body: text.slice(end + 4).replace(/^\s*\n/, "") };
 }
@@ -769,6 +793,23 @@ function skillsBase(source, subPath, paths) {
   return explicit === "" ? detectSkillsBase(paths) : explicit;
 }
 
+/**
+ * A repository whose skill *is* its base directory — `SKILL.md` sits directly
+ * in the base and no `<name>/SKILL.md` child exists. That single-skill layout
+ * (`next-1688/1688-shopkeeper` is one) would otherwise browse as empty, because
+ * every other probe here looks for `<name>/SKILL.md`. The name is the
+ * repository's own last segment, so the install directory stays predictable.
+ *
+ * @returns the skill name, or `null` for the ordinary multi-skill layout.
+ */
+function rootSkillName(source, base, paths) {
+  const prefix = base === "" ? "" : `${base}/`;
+  if (!paths.includes(`${prefix}SKILL.md`)) return null;
+  if (paths.some((path) => /^[^/]+\/SKILL\.md$/.test(path.slice(prefix.length)))) return null;
+  const name = String(source.repo).split("/").pop() ?? "";
+  return SKILL_NAME.test(name) ? name : null;
+}
+
 async function fetchRaw(repo, ref, path) {
   const url = `https://raw.githubusercontent.com/${repo}/${ref}/${path}`;
   const response = await fetch(url, {
@@ -801,6 +842,10 @@ async function browseSource({ source, ref, subPath }) {
     const dir = relative.slice(0, slash);
     if (skillDirs.has(dir)) skillDirs.get(dir).push(path);
   }
+  // Single-skill layout: the base itself is the skill, so every blob under it
+  // belongs to that one skill.
+  const rootName = skillDirs.size === 0 ? rootSkillName(source, base, paths) : null;
+  if (rootName !== null) skillDirs.set(rootName, [...inBase]);
 
   const names = [...skillDirs.keys()].filter((dir) => SKILL_NAME.test(dir)).sort();
   // Raw fetches carry no API quota, so descriptions can be read in parallel.
@@ -811,7 +856,11 @@ async function browseSource({ source, ref, subPath }) {
       const skillName = queue.shift();
       if (skillName === undefined) return;
       try {
-        const text = await fetchRaw(source.repo, pinned, `${prefix}${skillName}/SKILL.md`);
+        const skillFile =
+          rootName !== null && skillName === rootName
+            ? `${prefix}SKILL.md`
+            : `${prefix}${skillName}/SKILL.md`;
+        const text = await fetchRaw(source.repo, pinned, skillFile);
         const { fields } = parseFrontmatter(text);
         descriptions.set(skillName, typeof fields.description === "string" ? fields.description : "");
       } catch {
@@ -866,7 +915,11 @@ async function installSkill({ source, ref, skillName, scope, root, subPath, conf
   // An existing directory that this plugin does not own is never overwritten.
   assertOwned(dir, skillName, { allowMissing: true });
 
-  const skillPrefix = `${prefix}${skillName}/`;
+  // A single-skill repository installs from its base; every other repository
+  // installs from `<base>/<skill>/`. The name check keeps the root layout from
+  // silently swallowing a request for a different skill in the same repo.
+  const atRoot = rootSkillName(source, base, paths) === skillName;
+  const skillPrefix = atRoot ? prefix : `${prefix}${skillName}/`;
   const files = paths
     .filter((path) => path.startsWith(skillPrefix))
     .map((path) => path.slice(skillPrefix.length))
@@ -880,9 +933,11 @@ async function installSkill({ source, ref, skillName, scope, root, subPath, conf
     const body = await fetchRaw(source.repo, pinned, `${skillPrefix}${relative}`);
     writeFileAt(target, relative, body);
   }
+  /** Recorded in the marker/SOURCE.md; the root layout has no skill subdirectory. */
+  const recordedPath = atRoot ? base : `${prefix}${skillName}`;
   writeFileSync(
     join(target, MARKER),
-    JSON.stringify({ kind: "source", repo: source.repo, ref: pinned, path: `${prefix}${skillName}` }, null, 2) + "\n",
+    JSON.stringify({ kind: "source", repo: source.repo, ref: pinned, path: recordedPath }, null, 2) + "\n",
   );
   writeFileSync(
     join(target, "SOURCE.md"),
@@ -891,7 +946,7 @@ async function installSkill({ source, ref, skillName, scope, root, subPath, conf
       "",
       `- Repository: https://github.com/${source.repo}`,
       `- Pinned commit: \`${pinned}\``,
-      `- Path: \`${prefix}${skillName}\``,
+      `- Path: \`${recordedPath}\``,
       `- License: ${source.license}`,
       "",
       "Installed by dsh-market from an explicit commit. Reinstall from the Market page",
