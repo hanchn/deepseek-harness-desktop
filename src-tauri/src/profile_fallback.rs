@@ -39,7 +39,7 @@ const REPAIR_POLL: Duration = Duration::from_millis(25);
 // exact invocation against the staged runtime, so a Harness upgrade cannot
 // silently remove or rename this contract.
 const UPSTREAM_HEAL_EVAL: &str = r#"import { healProfilesModuleFallback } from "@deepseek-ai/dsh-app-boot";
-healProfilesModuleFallback(process.argv[1], process.argv[2]);
+healProfilesModuleFallback({ installAnchor: process.argv[1], home: process.argv[2] });
 "#;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

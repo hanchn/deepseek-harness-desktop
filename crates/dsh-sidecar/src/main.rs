@@ -110,8 +110,8 @@ fn install_signal_handlers() {
 #[cfg(not(unix))]
 fn install_signal_handlers() {}
 
-/// Extract `http://127.0.0.1:<port>` from the official readiness line:
-/// `dsh web: http://127.0.0.1:49321` (optionally with a ` (LAN: …)` suffix).
+/// Extract the loopback URL from the official readiness line. Newer Harness
+/// releases append a one-time browser token as `/?token=<base64url>`.
 pub fn extract_local_url(line: &str) -> Option<String> {
     const MARKER: &str = "dsh web: http://127.0.0.1:";
     let idx = line.find(MARKER)?;
@@ -120,17 +120,23 @@ pub fn extract_local_url(line: &str) -> Option<String> {
     if digits.is_empty() {
         return None;
     }
-    // Port must be followed by end of line or the documented " (LAN: …)"
-    // suffix — arbitrary trailing text must never count as readiness.
     let tail = &rest[digits.len()..];
-    if !tail.is_empty() && !tail.starts_with(" (LAN: ") {
-        return None;
-    }
     let port: u16 = digits.parse().ok()?;
     if port == 0 {
         return None;
     }
-    Some(format!("http://127.0.0.1:{port}"))
+    if tail.is_empty() || tail.starts_with(" (LAN: ") {
+        return Some(format!("http://127.0.0.1:{port}"));
+    }
+    let token = tail.strip_prefix("/?token=")?;
+    if !(16..=256).contains(&token.len())
+        || !token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return None;
+    }
+    Some(format!("http://127.0.0.1:{port}/?token={token}"))
 }
 
 /// A command received over stdin.
@@ -308,7 +314,11 @@ impl Heartbeat {
 fn http_probe(url: &str, read_timeout: Duration) -> bool {
     use std::io::{Read, Write};
     use std::net::{SocketAddr, TcpStream};
-    let Some(port) = url.rsplit(':').next().and_then(|p| p.parse::<u16>().ok()) else {
+    let Some(port) = url
+        .strip_prefix("http://127.0.0.1:")
+        .and_then(|rest| rest.split('/').next())
+        .and_then(|value| value.parse::<u16>().ok())
+    else {
         return false;
     };
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -805,6 +815,19 @@ mod tests {
     }
 
     #[test]
+    fn extracts_token_authenticated_readiness_line() {
+        assert_eq!(
+            extract_local_url(
+                "dsh web: http://127.0.0.1:49321/?token=wH4-1qg6qxsLIv49FfKoLj_wdSHXHNHRd4coLX0fZmU"
+            ),
+            Some(
+                "http://127.0.0.1:49321/?token=wH4-1qg6qxsLIv49FfKoLj_wdSHXHNHRd4coLX0fZmU"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
     fn rejects_unrelated_lines() {
         assert_eq!(extract_local_url("dsh web: listening"), None);
         assert_eq!(extract_local_url("http://127.0.0.1:80"), None);
@@ -814,6 +837,14 @@ mod tests {
         assert_eq!(extract_local_url("dsh web: http://127.0.0.1:123abc"), None);
         assert_eq!(extract_local_url("dsh web: http://127.0.0.1:70000"), None);
         assert_eq!(extract_local_url("dsh web: http://127.0.0.1:49321x"), None);
+        assert_eq!(
+            extract_local_url("dsh web: http://127.0.0.1:49321/?token=short"),
+            None
+        );
+        assert_eq!(
+            extract_local_url("dsh web: http://127.0.0.1:49321/?token=valid_length_but_bad!"),
+            None
+        );
         assert_eq!(
             extract_local_url("dsh web: http://127.0.0.1:49321 attacker"),
             None

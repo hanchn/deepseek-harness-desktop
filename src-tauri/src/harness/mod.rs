@@ -322,18 +322,31 @@ fn refresh_pid(stdin: &Arc<Mutex<Option<ChildStdin>>>) {
 }
 
 /// Strict readiness-URL validation: the exact shape the sidecar emits.
-/// http + host 127.0.0.1 + path "/" + explicit port 1..=65535, no userinfo,
-/// no query, no fragment. Any other shape is not a Harness readiness URL.
+/// http + host 127.0.0.1 + path "/" + explicit port 1..=65535, no userinfo or
+/// fragment. The only accepted query is Harness' one-time `token` value.
 pub(crate) fn is_valid_readiness_url(url: &str) -> bool {
     let Ok(parsed) = tauri::Url::parse(url) else {
         return false;
+    };
+    let valid_query = match parsed.query() {
+        None => true,
+        Some(_) => {
+            let pairs = parsed.query_pairs().collect::<Vec<_>>();
+            pairs.len() == 1
+                && pairs[0].0 == "token"
+                && (16..=256).contains(&pairs[0].1.len())
+                && pairs[0]
+                    .1
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        }
     };
     parsed.scheme() == "http"
         && parsed.host_str() == Some("127.0.0.1")
         && parsed.username().is_empty()
         && parsed.password().is_none()
         && parsed.path() == "/"
-        && parsed.query().is_none()
+        && valid_query
         && parsed.fragment().is_none()
         && matches!(parsed.port(), Some(port) if (1..=65535).contains(&port))
 }
@@ -1864,6 +1877,9 @@ mod tests {
     fn validates_readiness_urls() {
         assert!(is_valid_readiness_url("http://127.0.0.1:41234"));
         assert!(is_valid_readiness_url("http://127.0.0.1:1/"));
+        assert!(is_valid_readiness_url(
+            "http://127.0.0.1:41234/?token=wH4-1qg6qxsLIv49FfKoLj_wdSHXHNHRd4coLX0fZmU"
+        ));
         assert!(!is_valid_readiness_url("http://127.0.0.1:0"));
         assert!(!is_valid_readiness_url("http://127.0.0.1:65536"));
         assert!(!is_valid_readiness_url("http://127.0.0.1"));
@@ -1871,6 +1887,9 @@ mod tests {
         assert!(!is_valid_readiness_url("https://127.0.0.1:41234"));
         assert!(!is_valid_readiness_url("http://127.0.0.1:41234/some/path"));
         assert!(!is_valid_readiness_url("http://127.0.0.1:41234?q=1"));
+        assert!(!is_valid_readiness_url(
+            "http://127.0.0.1:41234/?token=too-short"
+        ));
         assert!(!is_valid_readiness_url("http://user@127.0.0.1:41234"));
         assert!(!is_valid_readiness_url("http://192.168.1.5:41234"));
         assert!(!is_valid_readiness_url("http://127.0.0.1:41234#frag"));

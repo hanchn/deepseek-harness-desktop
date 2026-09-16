@@ -179,7 +179,18 @@ sidecar.on("exit", (code) => {
 });
 
 async function probe(url: string): Promise<void> {
-  const res = await fetch(url, { redirect: "follow" });
+  let res = await fetch(url, { redirect: "manual" });
+  if (res.status >= 300 && res.status < 400) {
+    const location = res.headers.get("location");
+    const cookie = res.headers.get("set-cookie")?.split(";", 1)[0];
+    if (location === null || cookie === undefined) {
+      runtimeFail(`GET ${url} returned an incomplete authentication redirect`);
+    }
+    res = await fetch(new URL(location, url), {
+      headers: { cookie },
+      redirect: "follow",
+    });
+  }
   const body = await res.text();
   if (res.status !== 200) runtimeFail(`GET ${url} → HTTP ${res.status}`);
   if (!/<!doctype|<html|<div/i.test(body)) runtimeFail(`GET ${url} returned a non-HTML body (${body.length} bytes)`);
@@ -190,7 +201,7 @@ async function probe(url: string): Promise<void> {
 // `src-tauri/src/profile_fallback.rs`.  It deliberately calls the upstream
 // public repair API instead of copying its link-farm algorithm into Desktop.
 const upstreamProfileFallbackRepair =
-  'import { healProfilesModuleFallback } from "@deepseek-ai/dsh-app-boot";\nhealProfilesModuleFallback(process.argv[1], process.argv[2]);\n';
+  'import { healProfilesModuleFallback } from "@deepseek-ai/dsh-app-boot";\nhealProfilesModuleFallback({ installAnchor: process.argv[1], home: process.argv[2] });\n';
 
 async function runBundledNode(args: string[]): Promise<void> {
   await new Promise<void>((resolveRun, rejectRun) => {
