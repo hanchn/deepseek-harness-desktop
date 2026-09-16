@@ -180,6 +180,21 @@
   let sideloadPath = $state<string | null>(null);
   let recoveryOverview = $state<PluginRecoveryOverview | null>(null);
   let recoveryBusy = $state(false);
+  /**
+   * Why the package-name install button is inert, as a locale key, or null when
+   * it is clickable. A disabled button never fires a click, so a reason shown
+   * only through `startPluginOp`'s guard is invisible — it has to be readable
+   * without clicking, as a title and as an inline hint.
+   */
+  let pluginInstallBlock = $derived<TranslationKey | null>(
+    recoveryOverview?.transaction != null
+      ? "plugins.blockedRecovery"
+      : pluginProfileTransitioning
+        ? "plugins.blockedTransition"
+        : !pluginName.trim()
+          ? "plugins.needName"
+          : null,
+  );
   let recoveryError = $state<string | null>(null);
   let recoveryConfirm = $state<{
     action: "disable" | "rollback" | "finalize";
@@ -1863,6 +1878,11 @@
               class="primary"
               onclick={() => doMarketInstall(item)}
               disabled={pluginBusy || pluginProfileTransitioning || marketPreparing || marketOffline || recoveryOverview?.transaction != null}
+              title={recoveryOverview?.transaction != null
+                ? t("plugins.blockedRecovery")
+                : pluginProfileTransitioning
+                  ? t("plugins.blockedTransition")
+                  : undefined}
             >{marketPreparing ? t("action.verifying") : t("action.install")}</button>
           {:else}
             <button class="ghost" disabled title={item.installReason ?? t("market.notInstallable")}>
@@ -1925,11 +1945,22 @@
           <span class="plugin-busy"><span class="spinner"></span> {t("plugin.working")}</span>
           <button class="danger-ghost" onclick={doCancelPluginOp}>{t("action.cancel")}</button>
         {:else}
-          <button class="primary" onclick={() => startPluginOp(pluginName, "install")} disabled={pluginProfileTransitioning || !pluginName.trim() || recoveryOverview?.transaction != null}>
+          <button
+            class="primary"
+            onclick={() => startPluginOp(pluginName, "install")}
+            disabled={pluginInstallBlock != null}
+            title={pluginInstallBlock ? t(pluginInstallBlock) : undefined}
+          >
             {t("action.install")}
           </button>
         {/if}
       </div>
+      {#if pluginInstallBlock}
+        <div class="trust-note">{t(pluginInstallBlock)}</div>
+      {/if}
+    <div class="trust-note">
+      {t("plugins.sourceHint")}
+    </div>
     <div class="trust-note">
       {t("plugins.trustBeforeLink")}
       <button class="inline-link" onclick={() => openSite("https://cordis.run")}>cordis.run {t("action.pluginMarket")}</button>
