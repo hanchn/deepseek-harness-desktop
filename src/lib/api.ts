@@ -422,3 +422,87 @@ export async function onPluginDone(
   });
   return unlisten;
 }
+
+/**
+ * Local usage reporting. Token counts are provider-reported per billed
+ * attempt; `costUsd` is an estimate priced with the rate card the report
+ * carries, and stays `null` for a model that card does not cover.
+ */
+export interface UsageTokenTotals {
+  calls: number;
+  uncachedInput: number;
+  cacheRead: number;
+  cacheWrite: number;
+  output: number;
+  reasoning: number;
+  total: number;
+}
+
+export interface UsageModelUsage {
+  provider: string;
+  model: string;
+  tokens: UsageTokenTotals;
+  costUsd: number | null;
+  pricedCalls: number;
+  unpricedCalls: number;
+}
+
+export interface UsageDay {
+  day: string;
+  tokens: UsageTokenTotals;
+  costUsd: number | null;
+  pricedCalls: number;
+  unpricedCalls: number;
+  models: UsageModelUsage[];
+}
+
+export interface UsagePricingRow {
+  model: string;
+  cacheHit: number;
+  cacheMiss: number;
+  output: number;
+}
+
+export interface UsagePricing {
+  currency: string;
+  units: string;
+  peakMultiplier: number;
+  peakWindowsUtc: string[];
+  sourceUrl: string;
+  sourceDate: string;
+  models: UsagePricingRow[];
+}
+
+export interface UsageReport {
+  generatedAt: number;
+  timezoneOffsetMinutes: number;
+  windowDays: number;
+  today: UsageDay;
+  history: UsageDay[];
+  sessionsScanned: number;
+  sessionsUnreadable: number;
+  inheritedEventsSkipped: number;
+  unreadableLines: number;
+  pricing: UsagePricing;
+}
+
+export interface UsageBalanceEntry {
+  currency: string;
+  total: string;
+  granted: string;
+  toppedUp: string;
+}
+
+export interface UsageAccountBalance {
+  available: boolean;
+  balances: UsageBalanceEntry[];
+  fetchedAt: number;
+}
+
+export const getUsageReport = (
+  days: number,
+  tzOffsetMinutes: number,
+): Promise<UsageReport> => invoke("get_usage_report", { days, tzOffsetMinutes });
+
+export const getAccountBalance = (): Promise<UsageAccountBalance> =>
+  invoke("get_account_balance");

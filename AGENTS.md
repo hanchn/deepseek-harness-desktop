@@ -72,6 +72,16 @@ DSH CLI 的启动契约随版本演进，社区同类项目已实证踩坑（如
    Tauri `start_harness` args、`verify-runtime.ts` 冒烟断言；
 4. 全量冒烟（`verify-runtime` + `verify-heartbeat`）+ golden 测试复核。
 
+同一清单还须复核**用量面板读取的会话日志契约**（升级后）：`usage.rs` 直接解析
+`<DSH_HOME>/sessions/**/session.v3.jsonl.zstd`，依赖三件事——文件按「一个事件一个
+zstd 帧」追加、`assistant/message` 的 `data.usage`（`inputTokens` = 未命中缓存输入、
+`cacheReadTokens` = 命中缓存、`outputTokens` 含 `reasoningTokens`）、以及
+`request/header.data.header.config.{provider,model}` / `session.createdAt`。任一变化时
+同步 `src-tauri/src/usage.rs` 及其单测，并跑一次手动探针（`probe_real_home` 会对
+真实 DSH_HOME 输出完整报告 JSON，可与独立实现逐字段核对）：
+`DSH_USAGE_PROBE_HOME=<真实 DSH_HOME> DSH_USAGE_PROBE_TZ=<分钟> \
+cargo test --manifest-path src-tauri/Cargo.toml probe_real_home -- --ignored --nocapture`。
+
 同一清单还须复核**插件与预设子命令契约**（升级后）：
 
 - 对照新版复核 `dsh plugin --profile <name> <args...>`（requiredOption

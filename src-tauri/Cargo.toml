@@ -35,6 +35,13 @@ reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no
 rustls = { version = "0.23.43", default-features = false, features = ["ring", "std", "tls12"] }
 futures-util = "0.3"
 getrandom = "0.4"
+# The usage/balance panel folds the durable Harness session logs, which are
+# written as one concatenated zstd frame per event. ruzstd is the pure-Rust
+# decoder: no C toolchain on any target and no unsafe in our own surface.
+# The `hash` feature (twox-hash checksum verification) is deliberately off:
+# these are owner-only local files, and a damaged frame simply fails JSON
+# parsing, which keeps this addition to a single audited crate.
+ruzstd = { version = "0.9.0", default-features = false, features = ["std"] }
 # The sidecar's library surface: PlatformChild gives the plugin installer the
 # SAME process-tree guarantees (unix process group / Windows Job Object).
 # The version must stay in lockstep with crates/dsh-sidecar/Cargo.toml —

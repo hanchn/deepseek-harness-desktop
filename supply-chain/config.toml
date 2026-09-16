@@ -1167,6 +1167,11 @@ criteria = "safe-to-deploy"
 version = "0.3.1"
 criteria = "safe-to-run"
 
+[[exemptions.ruzstd]]
+version = "0.9.0"
+criteria = "safe-to-deploy"
+notes = "Pure-Rust zstd frame decoder used by the controller's usage panel to read the concatenated-frame session logs under DSH_HOME. Added with default-features = false (std only), so it brings zero transitive dependencies; the disabled `hash` feature only skips frame checksum verification for owner-only local files."
+
 [[exemptions.ryu]]
 version = "1.0.23"
 criteria = "safe-to-deploy"

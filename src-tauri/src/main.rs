@@ -24,6 +24,7 @@ mod redaction;
 mod secure_fs;
 mod tls;
 mod tray;
+mod usage;
 
 #[cfg(any(target_os = "macos", test))]
 mod app_menu;
@@ -216,7 +217,9 @@ fn main() {
             commands::market_prepare_install,
             commands::market_install_plugin,
             commands::activate_market_plugin,
-            commands::sideload_plugin
+            commands::sideload_plugin,
+            usage::get_usage_report,
+            usage::get_account_balance
         ]);
 
     let app = match builder.build(tauri::generate_context!()) {

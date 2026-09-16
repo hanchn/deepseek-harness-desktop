@@ -56,6 +56,8 @@ fn main() {
         "market_install_plugin",
         "activate_market_plugin",
         "sideload_plugin",
+        "get_usage_report",
+        "get_account_balance",
     ]);
     let result = tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest));
     if let Err(e) = result {

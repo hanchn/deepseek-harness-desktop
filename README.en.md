@@ -101,7 +101,47 @@ actual `ProductLanguage`, so the suffix is never merely cosmetic.
 | 🛡️ **Security boundary** | Harness window has zero IPC; app commands granted to the local window only; env sanitization |
 | 🔒 **Privacy defaults** | Session telemetry OFF; child env sanitized (NODE_OPTIONS, loader injection keys, …) |
 | 🧰 **Diagnostics & feedback** | One-click diagnostics zip (best-effort redaction), copy diagnostics, prefilled issue reports; an explicit detailed mode keeps bounded local stderr/Desktop-error evidence for a reproduction only |
+| 📊 **Usage & balance** | A corner watermark keeps today's token consumption, call counts, estimated spend and the account balance on screen (bottom-right / top-right / hidden); click it for the per-model and 30-day history detail. Token counts come from the provider-reported usage in the local session logs, and spend is estimated with the published rate card at peak/off-peak rates |
 | 🪟 **Desktop UX** | Single instance, window-state memory, crash auto-restart, macOS close-to-tray; the tray exposes Controller/Harness, start/restart, and stop only when the live Harness state permits it; controller, tray, and macOS menu language can follow the system or be set to Simplified Chinese / English, with synchronized window titles while the product name remains DSH Desktop |
+
+## Usage & balance
+
+The controller's "Usage & balance" watermark sits in a corner (bottom-right by
+default; switch it to top-right or hide it in the header) and opens a detail panel
+when clicked. It turns data that already exists on this machine into readable
+figures, and nothing about your usage is uploaded:
+
+- **Tokens and call counts** come from
+  `<DSH_HOME>/sessions/**/session.v3.jsonl.zstd`: the Harness appends each event
+  as its own zstd frame, and every `assistant/message` event carries the
+  provider-reported usage of one billed attempt (cache-miss input, cache-hit
+  input, and output, where output includes reasoning tokens). The desktop only
+  reads those logs, attributing each call to the **local calendar day** and
+  model it belongs to, so a time-zone change or a long session crossing
+  midnight never lands in the wrong day. Usage events replayed from a seeded
+  parent session are excluded by session creation time, so a fork never bills
+  its parent's calls twice.
+- **Spend is an estimate, not a bill.** No API exposes a local bill, so the
+  desktop prices every call with the compiled-in official rate card (currency
+  and read date are shown in the card) at the window that call actually fell
+  into — peak (UTC Monday–Friday `01:00–04:00` and `06:00–10:00`, i.e.
+  `09:00–12:00` and `14:00–18:00` Beijing time) costs twice the off-peak rate.
+  A model the card does not cover keeps its token counts and shows `—` instead
+  of `$0.00`, with unpriced calls listed separately.
+- **The account balance is the only network call**: the desktop reads the key
+  from the Harness credential store (`refs` in
+  `<DSH_HOME>/.credentials.yaml`, environment variable first) and makes one
+  request to DeepSeek's `GET /user/balance`, returning only the balance
+  figures. The key is never logged and never reaches the WebView. A missing
+  key, a rejected key and a timeout each produce their own readable message.
+- **History** covers 30 days by default (empty days included, so trends stay
+  visible); select any day to see its per-model breakdown. The card also
+  reports how many session logs were folded and how many replayed events were
+  excluded.
+
+Prices and accounting follow the
+[official DeepSeek pricing page](https://api-docs.deepseek.com/quick_start/pricing);
+the values in this release were read on the date shown in the card.
 
 ## ✨ Plugin ecosystem
 
