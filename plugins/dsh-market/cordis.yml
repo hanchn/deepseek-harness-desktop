@@ -1,0 +1,6 @@
+# dsh-market — DSH bundle patch
+# Mounts the host rows (CLI detection + skill reads/writes on the webServer);
+# the browser half rides the same package's `dsh.client` declaration.
+- insert:
+    - id: dsh-market
+      name: dsh-market

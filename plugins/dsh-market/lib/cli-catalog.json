@@ -1,0 +1,141 @@
+{
+  "_note": "Curated CLI catalog for the Market → CLI tab. Detection only: the host resolves each `detect` binary on PATH and runs `--version`. Install commands are DERIVED from npm/brew/uv fields, so keep those fields to package names that actually exist (npm: registry.npmjs.org, brew: formulae.brew.sh, uv: pypi.org). Nothing here is executed by DSH.",
+  "tools": [
+    {
+      "id": "codex",
+      "name": "Codex CLI",
+      "summary": "OpenAI 官方终端编码 agent。",
+      "detect": "codex",
+      "npm": "@openai/codex",
+      "homepage": "https://github.com/openai/codex",
+      "tags": ["agent"]
+    },
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "summary": "Anthropic 官方编码 agent CLI。",
+      "detect": "claude",
+      "npm": "@anthropic-ai/claude-code",
+      "homepage": "https://claude.com/product/claude-code",
+      "tags": ["agent"]
+    },
+    {
+      "id": "gemini-cli",
+      "name": "Gemini CLI",
+      "summary": "Google 官方终端 agent。",
+      "detect": "gemini",
+      "npm": "@google/gemini-cli",
+      "homepage": "https://github.com/google-gemini/gemini-cli",
+      "tags": ["agent"]
+    },
+    {
+      "id": "qwen-code",
+      "name": "Qwen Code",
+      "summary": "通义千问终端编码 agent。",
+      "detect": "qwen",
+      "npm": "@qwen-code/qwen-code",
+      "homepage": "https://github.com/QwenLM/qwen-code",
+      "tags": ["agent"]
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "summary": "开源终端编码 agent。",
+      "detect": "opencode",
+      "npm": "opencode-ai",
+      "homepage": "https://opencode.ai",
+      "tags": ["agent"]
+    },
+    {
+      "id": "crush",
+      "name": "Crush",
+      "summary": "Charm 出品的终端编码 agent。",
+      "detect": "crush",
+      "npm": "@charmland/crush",
+      "homepage": "https://github.com/charmbracelet/crush",
+      "tags": ["agent"]
+    },
+    {
+      "id": "amp",
+      "name": "Amp",
+      "summary": "Sourcegraph 的终端 agent。",
+      "detect": "amp",
+      "npm": "@sourcegraph/amp",
+      "homepage": "https://ampcode.com",
+      "tags": ["agent"]
+    },
+    {
+      "id": "aider",
+      "name": "Aider",
+      "summary": "Python 编写的结对编程 CLI。",
+      "detect": "aider",
+      "brew": "aider",
+      "uv": "aider-chat",
+      "homepage": "https://aider.chat",
+      "tags": ["agent"]
+    },
+    {
+      "id": "lark-cli",
+      "name": "Lark / 飞书 CLI",
+      "summary": "官方飞书 CLI，二进制内置 28 个 lark-* 技能（本仓库 vendored 的就是它）。",
+      "detect": "lark-cli",
+      "npm": "@larksuite/cli",
+      "homepage": "https://github.com/larksuite/cli",
+      "tags": ["platform"]
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama",
+      "summary": "本地大模型运行时。",
+      "detect": "ollama",
+      "brew": "ollama",
+      "homepage": "https://ollama.com",
+      "tags": ["runtime"]
+    },
+    {
+      "id": "gh",
+      "name": "GitHub CLI",
+      "summary": "官方 GitHub 命令行。",
+      "detect": "gh",
+      "brew": "gh",
+      "homepage": "https://cli.github.com",
+      "tags": ["dev"]
+    },
+    {
+      "id": "ripgrep",
+      "name": "ripgrep",
+      "summary": "快速全文搜索。",
+      "detect": "rg",
+      "brew": "ripgrep",
+      "homepage": "https://github.com/BurntSushi/ripgrep",
+      "tags": ["dev"]
+    },
+    {
+      "id": "fd",
+      "name": "fd",
+      "summary": "更友好的 find。",
+      "detect": "fd",
+      "brew": "fd",
+      "homepage": "https://github.com/sharkdp/fd",
+      "tags": ["dev"]
+    },
+    {
+      "id": "jq",
+      "name": "jq",
+      "summary": "命令行 JSON 处理。",
+      "detect": "jq",
+      "brew": "jq",
+      "homepage": "https://jqlang.github.io/jq/",
+      "tags": ["dev"]
+    },
+    {
+      "id": "uv",
+      "name": "uv",
+      "summary": "极快的 Python 包与环境管理器。",
+      "detect": "uv",
+      "brew": "uv",
+      "homepage": "https://docs.astral.sh/uv/",
+      "tags": ["dev"]
+    }
+  ]
+}
