@@ -65,8 +65,6 @@
     "allow-market-install-plugin",
     "allow-activate-market-plugin",
     "allow-sideload-plugin",
-    "allow-pick-sideload-file",
-    "allow-get-usage-report",
-    "allow-get-account-balance"
+    "allow-pick-sideload-file"
   ]
 }

@@ -1,7 +1,0 @@
-# dsh-usage-watermark — DSH bundle patch
-# Mounts the host row; the browser half rides the same package's `dsh.client`
-# declaration. See lib/index.js for the read-only report route and
-# lib/client.js for the header watermark.
-- insert:
-    - id: usage-watermark
-      name: dsh-usage-watermark

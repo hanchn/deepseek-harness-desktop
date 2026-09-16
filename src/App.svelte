@@ -55,11 +55,6 @@
     marketImage,
     sideloadPlugin,
     pickSideloadFile,
-    getUsageReport,
-    getAccountBalance,
-    type UsageReport,
-    type UsageDay,
-    type UsageAccountBalance,
     type MarketPluginSummary,
     type MarketPluginDetail,
     type MarketDescription,
@@ -89,19 +84,6 @@
   } from "./lib/install-arbitration";
   import { trapDialog } from "./lib/dialog-trap";
   import { classifyMarketFailure } from "./lib/market-error";
-  import { classifyUsageFailure, type UsageFailureKind } from "./lib/usage-error";
-  import {
-    loadUsageWatermarkPosition,
-    saveUsageWatermarkPosition,
-    type UsageWatermarkPosition,
-  } from "./lib/usage-watermark";
-  import {
-    formatCost,
-    formatExactTokens,
-    formatTokens,
-    isPeakNow,
-    sharePercent,
-  } from "./lib/usage-format";
   import { reconcilePluginCompletion } from "./lib/plugin-completion";
   import {
     browserLanguages,
@@ -228,44 +210,6 @@
     nativeControllerLocale ?? resolveControllerLocale(localePreference, systemLanguages),
   );
 
-  // ── Usage and balance ──────────────────────────────────────────────────
-  /** Width of the daily history the controller asks for. */
-  const USAGE_WINDOW_DAYS = 30;
-  let usageReport = $state<UsageReport | null>(null);
-  let usageBalance = $state<UsageAccountBalance | null>(null);
-  let usageBusy = $state(false);
-  let usageBalanceBusy = $state(false);
-  let usageError = $state<string | null>(null);
-  let usageBalanceError = $state<string | null>(null);
-  let usageSelectedDay = $state<string | null>(null);
-  let usageWatermark = $state<UsageWatermarkPosition>(loadUsageWatermarkPosition());
-  let usageDetailOpen = $state(false);
-  /** Re-rendered every 30s so the peak/off-peak badge follows the clock. */
-  let usageClock = $state(Date.now());
-  let usagePeakNow = $derived(isPeakNow(new Date(usageClock)));
-  let usageSelected = $derived<UsageDay | null>(
-    usageReport === null
-      ? null
-      : (usageReport.history.find((day) => day.day === usageSelectedDay) ?? usageReport.today),
-  );
-  let usageBusiestDay = $derived(
-    (usageReport?.history ?? []).reduce(
-      (peak, day) => Math.max(peak, day.tokens.total),
-      0,
-    ),
-  );
-  /**
-   * Balance as the provider stated it — exact strings, no re-formatting, so
-   * the overlay can never show a rounded figure the account does not have.
-   */
-  let usageBalanceLabel = $derived(
-    usageBalance === null || usageBalance.balances.length === 0
-      ? null
-      : usageBalance.balances
-          .map((entry) => `${entry.total} ${entry.currency}`)
-          .join(" · "),
-  );
-
   const STATUS_TEXT: Record<Status, TranslationKey> = {
     idle: "status.idle",
     starting: "status.starting",
@@ -378,97 +322,6 @@
       context: translatedContext,
       reason: t(MARKET_FAILURE_KEYS[failure.kind]),
     });
-  }
-
-  const USAGE_FAILURE_KEYS: Record<UsageFailureKind, TranslationKey> = {
-    noCredential: "usage.failure.noCredential",
-    keyRejected: "usage.failure.keyRejected",
-    timeout: "usage.failure.timeout",
-    unavailable: "usage.failure.unavailable",
-    http: "usage.failure.http",
-    invalidResponse: "usage.failure.invalidResponse",
-    unknown: "usage.failure.unknown",
-  };
-
-  function usageFailureMessage(context: TranslationKey, error: unknown): string {
-    return t("usage.failure", {
-      context: t(context),
-      reason: t(USAGE_FAILURE_KEYS[classifyUsageFailure(error)]),
-    });
-  }
-
-  /**
-   * Token totals are local-file reads, so they never block on the network and
-   * can refresh independently of the balance request.
-   */
-  async function loadUsageReport() {
-    if (!inTauri || usageBusy) return;
-    usageBusy = true;
-    usageError = null;
-    try {
-      // The controller asks for its own local day boundaries: the report
-      // buckets calls by the user's calendar day, not by UTC.
-      const tzOffsetMinutes = -new Date().getTimezoneOffset();
-      const report = await getUsageReport(USAGE_WINDOW_DAYS, tzOffsetMinutes);
-      usageReport = report;
-      usageSelectedDay = report.history.some((day) => day.day === usageSelectedDay)
-        ? usageSelectedDay
-        : report.today.day;
-    } catch (error) {
-      usageError = usageFailureMessage("usage.title", error);
-    } finally {
-      usageBusy = false;
-    }
-  }
-
-  async function loadUsageBalance() {
-    if (!inTauri || usageBalanceBusy) return;
-    usageBalanceBusy = true;
-    usageBalanceError = null;
-    try {
-      usageBalance = await getAccountBalance();
-    } catch (error) {
-      usageBalance = null;
-      usageBalanceError = usageFailureMessage("usage.balance", error);
-    } finally {
-      usageBalanceBusy = false;
-    }
-  }
-
-  function refreshUsage() {
-    usageClock = Date.now();
-    void loadUsageReport();
-    void loadUsageBalance();
-  }
-
-  function setUsageWatermark(position: UsageWatermarkPosition) {
-    usageWatermark = position;
-    if (position === "hidden") usageDetailOpen = false;
-    saveUsageWatermarkPosition(position);
-  }
-
-  function onUsageWatermarkChange(event: Event) {
-    const value = (event.currentTarget as HTMLSelectElement).value;
-    if (value === "bottom-right" || value === "top-right" || value === "hidden") {
-      setUsageWatermark(value);
-    }
-  }
-
-  function usageSourcesText(report: UsageReport): string {
-    let text = t("usage.sources", {
-      scanned: report.sessionsScanned,
-      calls: formatExactTokens(
-        report.history.reduce((sum, day) => sum + day.tokens.calls, 0),
-        controllerLocale,
-      ),
-    });
-    if (report.sessionsUnreadable > 0) {
-      text += t("usage.sourcesUnreadable", { count: report.sessionsUnreadable });
-    }
-    if (report.inheritedEventsSkipped > 0) {
-      text += t("usage.sourcesInherited", { count: report.inheritedEventsSkipped });
-    }
-    return text;
   }
 
   function apply(p: StatusPayload) {
@@ -1367,7 +1220,6 @@
     refreshPresets();
     refreshPlugins();
     refreshRecovery();
-    refreshUsage();
     if (inTauri) void doMarketSearch(true);
     // Silent boot-time update check: only inform, never prompt.
     if (!storeBuild) {
@@ -1378,16 +1230,6 @@
         /* offline / draft release: stay silent */
       }
     }
-  });
-
-  // The peak/off-peak badge is the only part of the usage panel that depends
-  // on the wall clock, so one minute-resolution tick keeps it honest without
-  // re-reading any log.
-  $effect(() => {
-    const timer = setInterval(() => {
-      usageClock = Date.now();
-    }, 60_000);
-    return () => clearInterval(timer);
   });
 
   // Event subscription in a $effect: async onMount cannot return a cleanup
@@ -1681,18 +1523,6 @@
         <option value="en">{t("locale.en")}</option>
       </select>
     </label>
-    <label class="locale-control">
-      <span>{t("usage.position")}</span>
-      <select
-        value={usageWatermark}
-        onchange={onUsageWatermarkChange}
-        aria-label={t("usage.position")}
-      >
-        <option value="bottom-right">{t("usage.positionBottomRight")}</option>
-        <option value="top-right">{t("usage.positionTopRight")}</option>
-        <option value="hidden">{t("usage.positionHidden")}</option>
-      </select>
-    </label>
     <span class="badge">v{versions.desktop}</span>
   </header>
 
@@ -1780,215 +1610,6 @@
       </p>
     {/if}
   </div>
-
-  <!-- Usage is a corner overlay rather than a page card: the controller keeps
-       its layout while today's tokens, spend and balance stay visible. The
-       overlay is click-through-free but never modal; the detail panel opens
-       on demand and scrolls on its own. -->
-  {#if usageWatermark !== "hidden"}
-    <button
-      class="usage-watermark {usageWatermark}"
-      class:usage-peak={usagePeakNow}
-      onclick={() => (usageDetailOpen = !usageDetailOpen)}
-      title={t("usage.watermarkHint")}
-      aria-expanded={usageDetailOpen}
-    >
-      {#if usageReport}
-        <span class="usage-watermark-line">
-          {t("usage.watermarkToday", {
-            tokens: formatTokens(usageReport.today.tokens.total, controllerLocale),
-            cost: formatCost(usageReport.today.costUsd, controllerLocale),
-          })}
-        </span>
-        <span class="usage-watermark-line usage-watermark-dim">
-          {t("usage.watermarkCalls", {
-            calls: formatExactTokens(usageReport.today.tokens.calls, controllerLocale),
-          })}
-          {#if usageBalanceLabel}
-            · {t("usage.watermarkBalance", { balance: usageBalanceLabel })}
-          {/if}
-        </span>
-      {:else}
-        <span class="usage-watermark-line">
-          {usageBusy ? t("usage.loading") : t("usage.watermarkEmpty")}
-        </span>
-      {/if}
-    </button>
-  {/if}
-
-  {#if usageDetailOpen && usageWatermark !== "hidden"}
-    <div class="usage-panel {usageWatermark}">
-      <div class="update-row">
-        <span class="update-title">{t("usage.title")}</span>
-        <span class="badge" class:usage-peak={usagePeakNow}>
-          {usagePeakNow ? t("usage.peakNow") : t("usage.offPeakNow")}
-        </span>
-        <button class="ghost" onclick={refreshUsage} disabled={usageBusy || usageBalanceBusy}>
-          {usageBusy || usageBalanceBusy ? t("usage.loading") : t("usage.refresh")}
-        </button>
-        <button class="ghost" onclick={() => (usageDetailOpen = false)}>
-          {t("usage.close")}
-        </button>
-      </div>
-
-      {#if usageError}
-        <div class="notice-box">{usageError}</div>
-      {/if}
-
-      {#if usageReport}
-        {@const today = usageReport.today}
-        {@const selected = usageSelected ?? today}
-        <div class="usage-metrics">
-          <div class="usage-metric">
-            <span class="usage-metric-label">{t("usage.calls")}</span>
-            <span class="usage-metric-value">
-              {formatExactTokens(today.tokens.calls, controllerLocale)}
-            </span>
-          </div>
-          <div class="usage-metric">
-            <span class="usage-metric-label">{t("usage.totalTokens")}</span>
-            <span
-              class="usage-metric-value"
-              title={formatExactTokens(today.tokens.total, controllerLocale)}
-            >{formatTokens(today.tokens.total, controllerLocale)}</span>
-          </div>
-          <div class="usage-metric">
-            <span class="usage-metric-label">{t("usage.uncachedInput")}</span>
-            <span
-              class="usage-metric-value"
-              title={formatExactTokens(today.tokens.uncachedInput, controllerLocale)}
-            >{formatTokens(today.tokens.uncachedInput, controllerLocale)}</span>
-          </div>
-          <div class="usage-metric">
-            <span class="usage-metric-label">{t("usage.cacheRead")}</span>
-            <span
-              class="usage-metric-value"
-              title={formatExactTokens(today.tokens.cacheRead, controllerLocale)}
-            >{formatTokens(today.tokens.cacheRead, controllerLocale)}</span>
-          </div>
-          <div class="usage-metric">
-            <span class="usage-metric-label">{t("usage.output")}</span>
-            <span
-              class="usage-metric-value"
-              title={formatExactTokens(today.tokens.output, controllerLocale)}
-            >{formatTokens(today.tokens.output, controllerLocale)}</span>
-            <span class="usage-metric-note">
-              {t("usage.reasoning")} {formatTokens(today.tokens.reasoning, controllerLocale)}
-            </span>
-          </div>
-          <div class="usage-metric">
-            <span class="usage-metric-label">{t("usage.spend")}</span>
-            <span class="usage-metric-value">{formatCost(today.costUsd, controllerLocale)}</span>
-            {#if today.unpricedCalls > 0}
-              <span class="usage-metric-note">{t("usage.unpriced")}</span>
-            {/if}
-          </div>
-        </div>
-
-        <div class="usage-section-title">
-          {t("usage.models")}
-          <span class="badge">{selected.day}</span>
-        </div>
-        {#if selected.models.length === 0}
-          <div class="trust-note">{t("usage.historyEmpty")}</div>
-        {:else}
-          <table class="usage-table">
-            <thead>
-              <tr>
-                <th>{t("usage.table.model")}</th>
-                <th>{t("usage.table.tokens")}</th>
-                <th>{t("usage.table.cost")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each selected.models as row (row.provider + "/" + row.model)}
-                <tr>
-                  <td>
-                    <span class="usage-model">{row.model}</span>
-                    <span class="badge">{row.provider}</span>
-                  </td>
-                  <td title={formatExactTokens(row.tokens.total, controllerLocale)}>
-                    {formatTokens(row.tokens.total, controllerLocale)}
-                  </td>
-                  <td>{formatCost(row.costUsd, controllerLocale)}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        {/if}
-        {#if selected.unpricedCalls > 0}
-          <div class="trust-note">
-            {t("usage.unpricedNote", { count: selected.unpricedCalls })}
-          </div>
-        {/if}
-
-        <div class="usage-section-title">{t("usage.balance")}</div>
-        {#if usageBalanceError}
-          <div class="notice-box">{usageBalanceError}</div>
-        {:else if usageBalance}
-          {#each usageBalance.balances as entry (entry.currency)}
-            <div class="usage-balance">
-              <span class="usage-metric-label">{t("usage.balanceTotal")} · {entry.currency}</span>
-              <span class="usage-metric-value">{entry.total}</span>
-              <span class="usage-metric-note">
-                {t("usage.balanceGranted")} {entry.granted} · {t("usage.balanceToppedUp")} {entry.toppedUp}
-              </span>
-              {#if !usageBalance.available}
-                <span class="badge">{t("usage.balanceUnavailable")}</span>
-              {/if}
-            </div>
-          {/each}
-        {:else}
-          <div class="trust-note">{usageBalanceBusy ? t("usage.loading") : t("usage.empty")}</div>
-        {/if}
-
-        <div class="usage-section-title">{t("usage.history", { days: usageReport.windowDays })}</div>
-        <div class="usage-history">
-          {#each [...usageReport.history].reverse() as day (day.day)}
-            <button
-              class="usage-day"
-              class:selected={day.day === selected.day}
-              onclick={() => (usageSelectedDay = day.day)}
-            >
-              <span class="usage-day-label">{day.day}</span>
-              <span class="usage-bar">
-                <span
-                  class="usage-bar-fill"
-                  style="width: {sharePercent(day.tokens.total, usageBusiestDay)}%"
-                ></span>
-              </span>
-              <span class="usage-day-tokens" title={formatExactTokens(day.tokens.total, controllerLocale)}>
-                {formatTokens(day.tokens.total, controllerLocale)}
-              </span>
-              <span class="usage-day-cost">{formatCost(day.costUsd, controllerLocale)}</span>
-            </button>
-          {/each}
-        </div>
-
-        <div class="trust-note">{usageSourcesText(usageReport)}</div>
-        <div class="trust-note">
-          {t("usage.pricingNote", {
-            currency: usageReport.pricing.currency,
-            multiplier: usageReport.pricing.peakMultiplier,
-            date: usageReport.pricing.sourceDate,
-          })}
-        </div>
-        <div class="usage-prices">
-          <span class="usage-metric-label">{t("usage.pricingSource")}</span>
-          {#each usageReport.pricing.models as price (price.model)}
-            <span class="usage-price">
-              {price.model}
-              <b
-                title="{usageReport.pricing.units} · {usageReport.pricing.currency}"
-              >{formatCost(price.cacheHit, controllerLocale)} / {formatCost(price.cacheMiss, controllerLocale)} / {formatCost(price.output, controllerLocale)}</b>
-            </span>
-          {/each}
-        </div>
-      {:else if !usageBusy}
-        <div class="trust-note">{t("usage.empty")}</div>
-      {/if}
-    </div>
-  {/if}
 
   {#if recoveryError || recoveryOverview?.transaction || (recoveryOverview?.candidates.length ?? 0) > 0}
     <div class="card recovery-card">
