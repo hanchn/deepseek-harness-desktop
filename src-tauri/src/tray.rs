@@ -235,6 +235,9 @@ pub(crate) fn update_locale(app: &AppHandle, locale: PresentationLocale) {
 }
 
 fn show_controller(app: &AppHandle) {
+    // The controller column is hidden by default (the Harness owns the whole
+    // window), so revealing it is a layout change as well as a window command.
+    crate::harness::set_controller_visible(app, true);
     if let Some(window) = app.get_webview_window("bootstrap") {
         let _ = window.show();
         let _ = window.unminimize();

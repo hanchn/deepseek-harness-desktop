@@ -17,6 +17,15 @@ const MAX_LOGS: usize = 500;
 const MAX_SUPERVISOR_LINE_BYTES: usize = 16 * 1024;
 const CONTROLLER_WIDTH: f64 = 360.0;
 
+/// Whether the trusted controller column is shown beside the Harness.
+///
+/// The desktop default is *hidden*: DSH opens as one window whose content is
+/// the Harness UI, and the controller column appears only while the Harness is
+/// not usable (starting, stopped, crashed) or when the user asks for it from
+/// the tray. Hiding the controller webview changes no capability grant — the
+/// trusted surface stays mounted, it just occupies no space.
+static CONTROLLER_VISIBLE: AtomicBool = AtomicBool::new(false);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
@@ -367,9 +376,49 @@ fn matches_authorized_origin(candidate: &tauri::Url, authorized: Option<&str>) -
         .is_some_and(|origin| same_origin(candidate, &origin))
 }
 
+/// Pure policy for the automatic controller state.
+///
+/// The controller is the repair surface, so it is shown while the Harness is
+/// unusable and hidden while it is usable. Transitional states return `None`:
+/// a restart passes through Stopping → Starting, and re-deciding there would
+/// flash the controller column in front of the user on every restart.
+fn controller_auto_visible(status: Status) -> Option<bool> {
+    match status {
+        Status::Running => Some(false),
+        Status::Idle | Status::Stopped | Status::Crashed => Some(true),
+        Status::Starting | Status::Stopping => None,
+    }
+}
+
+/// Physical pixels the controller column takes from the window at this scale.
+fn controller_sidebar_px(inner_width: u32, scale: f64, visible: bool) -> u32 {
+    if !visible {
+        return 0;
+    }
+    ((CONTROLLER_WIDTH * scale).round() as u32).min(inner_width)
+}
+
+/// Current Harness status without holding the lock across other work.
+fn current_status(state: &Arc<Mutex<SharedState>>) -> Status {
+    state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .status
+}
+
+/// Show or hide the controller column, then re-lay out the unified window.
+pub(crate) fn set_controller_visible(app: &AppHandle, visible: bool) {
+    CONTROLLER_VISIBLE.store(visible, Ordering::SeqCst);
+    layout_unified_window(app);
+}
+
 /// Keep the trusted local controller and the zero-IPC remote Harness in one
 /// physical window. Capabilities target webview labels (not the parent window)
 /// so the remote child never inherits controller commands.
+///
+/// With the controller hidden the Harness child spans the whole window — the
+/// controller webview stays mounted and keeps its IPC grants, it just takes no
+/// space, so showing it again is a layout change and never a reload.
 fn layout_unified_window(app: &AppHandle) {
     let Some(window) = app.get_window("bootstrap") else {
         return;
@@ -378,11 +427,17 @@ fn layout_unified_window(app: &AppHandle) {
         return;
     };
     let scale = window.scale_factor().unwrap_or(1.0);
-    let sidebar = ((CONTROLLER_WIDTH * scale).round() as u32).min(inner.width);
+    let visible = CONTROLLER_VISIBLE.load(Ordering::SeqCst);
+    let sidebar = controller_sidebar_px(inner.width, scale, visible);
 
     if let Some(controller) = app.get_webview("bootstrap") {
-        let _ = controller.set_position(tauri::PhysicalPosition::new(0, 0));
-        let _ = controller.set_size(tauri::PhysicalSize::new(sidebar, inner.height));
+        if visible {
+            let _ = controller.set_position(tauri::PhysicalPosition::new(0, 0));
+            let _ = controller.set_size(tauri::PhysicalSize::new(sidebar, inner.height));
+            let _ = controller.show();
+        } else {
+            let _ = controller.hide();
+        }
     }
     if let Some(harness) = app.get_webview("harness") {
         let _ = harness.set_position(tauri::PhysicalPosition::new(sidebar as i32, 0));
@@ -458,7 +513,11 @@ pub(crate) fn open_harness_window(app: &AppHandle, url: &str) {
                 return;
             };
             let scale = parent.scale_factor().unwrap_or(1.0);
-            let sidebar = ((CONTROLLER_WIDTH * scale).round() as u32).min(inner.width);
+            let sidebar = controller_sidebar_px(
+                inner.width,
+                scale,
+                CONTROLLER_VISIBLE.load(Ordering::SeqCst),
+            );
             let navigation_origin = authorized_origin.clone();
             let builder =
                 tauri::webview::WebviewBuilder::new("harness", tauri::WebviewUrl::External(parsed))
@@ -727,11 +786,22 @@ fn handle_event(
         return;
     }
 
+    // One window, Codex-style: the Harness owns it whenever it is usable, and
+    // the controller column comes back the moment it is not. Only transitions
+    // act, so a controller the user opened from the tray is not yanked away by
+    // unrelated state traffic (logs, pid refreshes, repeated snapshots).
+    let status_before = current_status(state);
     for effect in apply_state_event(state, shutting_down, restart_attempts, ev) {
         match effect {
             SideEffect::OpenWindow(url) => open_harness_window(app, &url),
             SideEffect::RefreshPid => refresh_pid(stdin),
             SideEffect::ScheduleAutoRestart(attempts) => schedule_auto_restart(app, attempts),
+        }
+    }
+    let status_after = current_status(state);
+    if status_before != status_after {
+        if let Some(visible) = controller_auto_visible(status_after) {
+            set_controller_visible(app, visible);
         }
     }
     if ev.get("type").and_then(Value::as_str) == Some("error") {
@@ -1987,5 +2057,38 @@ mod tests {
         ));
         assert!(!matches_authorized_origin(&first_root, None));
         assert!(!matches_authorized_origin(&first_root, Some("not a URL")));
+    }
+
+    #[test]
+    fn controller_column_is_automatic_only_while_the_harness_is_unusable() {
+        // The Codex-style default: while the Harness runs it owns the window.
+        assert_eq!(controller_auto_visible(Status::Running), Some(false));
+        // Terminal states are repair surfaces, so the controller is shown.
+        for status in [Status::Idle, Status::Stopped, Status::Crashed] {
+            assert_eq!(
+                controller_auto_visible(status),
+                Some(true),
+                "{status:?} must show the controller"
+            );
+        }
+        // Transitions decide nothing, so a restart never flashes the column.
+        for status in [Status::Starting, Status::Stopping] {
+            assert_eq!(controller_auto_visible(status), None, "{status:?}");
+        }
+    }
+
+    #[test]
+    fn a_hidden_controller_takes_no_width() {
+        assert_eq!(controller_sidebar_px(1440, 2.0, false), 0);
+        assert_eq!(controller_sidebar_px(1440, 1.0, false), 0);
+    }
+
+    #[test]
+    fn the_controller_column_scales_and_never_exceeds_the_window() {
+        assert_eq!(controller_sidebar_px(1440, 1.0, true), 360);
+        assert_eq!(controller_sidebar_px(1440, 2.0, true), 720);
+        // A window narrower than the preferred column keeps the whole width
+        // for the controller instead of overflowing the frame.
+        assert_eq!(controller_sidebar_px(200, 2.0, true), 200);
     }
 }
