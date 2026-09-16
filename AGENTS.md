@@ -123,6 +123,22 @@ Dependabot 对 harness 的 ignore 不作用于 security updates：若收到
 - `--target user` 可改写到 `$DSH_AGENTS_HOME/skills`（默认 `~/.agents/skills`），
   让非本仓库工作区的会话也能用；仓库内 vendored 仍是唯一事实源。
 
+## 随仓库维护的 agent preset（`presets/`）
+
+preset 决定**单个会话**拿到哪些工具与提示词段。上游内置 `standard`/`ptc`/
+`minimal`/`cordis`；本仓库自带 `fleet`（舰队模式）= 复制 `standard` 的能力行
++ 「指挥」persona（侦察 → 拆片 → 批量派子 Agent → 自己集成 → 对抗式验收）。
+
+- **不要改内置 preset**（升级会覆盖）；照上游指引复制成新 preset 再改。
+  `presets/README.md` 有安装与验证命令。
+- preset 是用户配置，落在 `<DSH_HOME>/.agent-presets/<id>/`（`preset.yml` +
+  `agent.cordis.yml`）；桌面版也可打包成 `.dshpreset` 走设置页导入。
+- **发布 service 的行必须放进带 `isolate` 的 group**，否则会发到 root realm、
+  与其它 preset 冲突，并在挂载时被 `dsh-agent-presets` 拒绝。
+- 只允许空会话切换 preset（上游限制）。
+- 验证：用随包 `discoverPresets` 断言 `broken === null`；基准 URL 必须是
+  **harness 目录**（拿仓库目录当基准会全量误报「包名解析不了」）。
+
 ## 禁区清单
 
 - **不改 Harness Web UI / 上游代码**；只 pin npm 包。
